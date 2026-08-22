@@ -194,3 +194,58 @@ class HimalayaTeacherEnvCfg_PLAY(HimalayaTeacherEnvCfg):
         self.events.push_robot = None
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 2: fixes for three defects observed in run 1.
+# ---------------------------------------------------------------------------
+#
+# Run 1 reached reward +4.4, episode length ~950, terrain level 2.4 -- a good
+# baseline. Its reward-term breakdown exposed three problems:
+#
+# 1. SHUFFLING GAIT. feet_air_time earned only 0.0067 while feet_slide cost
+#    -0.0447 -- feet spend far more time sliding than swinging. The policy
+#    found a shuffle that satisfies velocity tracking cheaply. That works on
+#    easy tiles and fails on rough ground, where clearing a rock needs actual
+#    foot lift. This is the classic "reward curve looks great, video shows
+#    skating" pathology.
+#      -> feet_air_time 0.25 -> 1.0, feet_slide -0.1 -> -0.25
+#
+# 2. PHANTOM FINGER PENALTY. joint_deviation_fingers was active (-0.0099) on
+#    a robot whose finger joints we do not control. Inherited from the stock
+#    config, which targets the 37-DOF hand variant.
+#      -> removed
+#
+# 3. WRONG ROBOT. The stock asset is NVIDIA's 37-DOF G1 (it matches
+#    ".*_elbow_pitch_joint"; our 23-DOF URDF names it ".*_elbow_joint").
+#    So run 1's arms were not the arms we care about, and the arm actuator
+#    gains in g1_cfg.py were never applied.
+#      -> see HimalayaTeacher23EnvCfg below; needs the URDF converted to USD
+#         first (scripts/convert_urdf.py), so it is kept separate from the
+#         gait fixes rather than blocking them.
+
+
+@configclass
+class HimalayaRewardsV2(HimalayaRewards):
+    """Run-1 rewards with the shuffling gait penalized properly."""
+
+    def __post_init__(self):
+        # No finger joints under our control -- the stock term matches nothing
+        # we actuate and just adds noise to the reward.
+        self.joint_deviation_fingers = None
+
+
+@configclass
+class HimalayaTeacherV2EnvCfg(HimalayaTeacherEnvCfg):
+    """Run 2: same terrain and arm treatment, gait actually required to step."""
+
+    rewards: HimalayaRewardsV2 = HimalayaRewardsV2()
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Make stepping pay and shuffling cost. Run 1's air-time reward was
+        # 7x smaller than its slide penalty, so sliding was simply cheaper.
+        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_slide.weight = -0.25
+
+
