@@ -249,3 +249,146 @@ class HimalayaTeacherV2EnvCfg(HimalayaTeacherEnvCfg):
         self.rewards.feet_slide.weight = -0.25
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 3: the actual 23-DOF G1, with our arm actuator gains.
+# ---------------------------------------------------------------------------
+#
+# Runs 1 and 2 use Isaac Lab's G1_MINIMAL_CFG -- NVIDIA's 37-DOF G1 with
+# hands and 7-DOF arms. Confirmed from run 1: the stock asset matches
+# ".*_elbow_pitch_joint" while our URDF names that joint ".*_elbow_joint",
+# and the phantom joint_deviation_fingers term was scoring nonzero.
+#
+# So the arm motion observed in runs 1-2 is NOT this project's arms. It is a
+# different robot, with different arm inertia, different DOF, and NVIDIA's
+# gains. The arms-for-balance question is untested until this config runs.
+#
+# What changes here:
+#   - asset: our g1_23dof.usd, converted from assets/g1/g1_23dof.urdf
+#   - actuators: leg gains from unitree_rl_gym; ARM gains are ours, scaled
+#     to the 25 Nm arm ceiling (vs 139 Nm knee -- arms are 5.6x weaker, which
+#     is the quantitative reason they may not recruit for balance on their own)
+#   - joint regex fixed: ".*_elbow_joint", no finger terms, waist_yaw_joint
+#     (this variant has yaw only -- no waist pitch/roll, so torso balance
+#     authority is limited)
+
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import ArticulationCfg
+
+G1_23DOF_USD = "/workspace/himalaya_proj/assets/g1/g1_23dof.usd"
+
+G1_23DOF_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=G1_23DOF_USD,
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=True,   # arms can strike the torso; penalized
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=0,
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.79),
+        joint_pos={
+            # Slight knee bend: a straight-leg start makes first contacts stiff
+            # and teaches the policy to lock its knees.
+            ".*_hip_pitch_joint": -0.10,
+            ".*_knee_joint": 0.30,
+            ".*_ankle_pitch_joint": -0.20,
+            ".*_hip_roll_joint": 0.0,
+            ".*_hip_yaw_joint": 0.0,
+            ".*_ankle_roll_joint": 0.0,
+            "waist_yaw_joint": 0.0,
+            # Arms hang with a small mirrored shoulder-roll offset, elbows off
+            # their limits so there is room to swing in both directions.
+            ".*_shoulder_pitch_joint": 0.20,
+            "left_shoulder_roll_joint": 0.20,
+            "right_shoulder_roll_joint": -0.20,
+            ".*_shoulder_yaw_joint": 0.0,
+            ".*_elbow_joint": 0.90,
+            ".*_wrist_roll_joint": 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        # Leg gains: unitree_rl_gym's published G1 values.
+        "hips": ImplicitActuatorCfg(
+            joint_names_expr=[".*_hip_.*"],
+            effort_limit=88.0, velocity_limit=32.0, stiffness=100.0, damping=2.0,
+        ),
+        "knees": ImplicitActuatorCfg(
+            joint_names_expr=[".*_knee_joint"],
+            effort_limit=139.0, velocity_limit=20.0, stiffness=150.0, damping=4.0,
+        ),
+        "ankles": ImplicitActuatorCfg(
+            joint_names_expr=[".*_ankle_.*"],
+            effort_limit=35.0, velocity_limit=30.0, stiffness=40.0, damping=2.0,
+        ),
+        "waist": ImplicitActuatorCfg(
+            joint_names_expr=["waist_yaw_joint"],
+            effort_limit=88.0, velocity_limit=32.0, stiffness=100.0, damping=2.0,
+        ),
+        # Arm gains are OURS. The reference config locks the upper body and
+        # publishes none. Deliberately compliant: stiff arms are dead weight,
+        # and dead weight is the failure mode we are trying to avoid.
+        "shoulders": ImplicitActuatorCfg(
+            joint_names_expr=[".*_shoulder_.*"],
+            effort_limit=25.0, velocity_limit=37.0, stiffness=40.0, damping=2.0,
+        ),
+        "elbows_wrists": ImplicitActuatorCfg(
+            joint_names_expr=[".*_elbow_joint", ".*_wrist_roll_joint"],
+            effort_limit=25.0, velocity_limit=37.0, stiffness=20.0, damping=1.0,
+        ),
+    },
+)
+
+
+@configclass
+class HimalayaRewards23(HimalayaRewardsV2):
+    """V2 rewards with joint regexes corrected for the 23-DOF joint names."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Stock matches ".*_elbow_pitch_joint" / ".*_elbow_roll_joint", which
+        # exist only on the 37-DOF variant. Ours is ".*_elbow_joint".
+        self.joint_deviation_arms.params["asset_cfg"] = SceneEntityCfg(
+            "robot",
+            joint_names=[
+                ".*_shoulder_pitch_joint",
+                ".*_shoulder_roll_joint",
+                ".*_shoulder_yaw_joint",
+                ".*_elbow_joint",
+                ".*_wrist_roll_joint",
+            ],
+        )
+        # This variant has waist YAW only -- no "torso_joint".
+        self.joint_deviation_torso.params["asset_cfg"] = SceneEntityCfg(
+            "robot", joint_names=["waist_yaw_joint"]
+        )
+
+
+@configclass
+class HimalayaTeacher23EnvCfg(HimalayaTeacherV2EnvCfg):
+    """Run 3: our 23-DOF G1. The first config that actually tests the
+    arms-for-balance question on the right robot."""
+
+    rewards: HimalayaRewards23 = HimalayaRewards23()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot = G1_23DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        # Height scanner and termination body: our URDF names the torso
+        # "torso_link", same as stock, so these carry over unchanged.
+
+
