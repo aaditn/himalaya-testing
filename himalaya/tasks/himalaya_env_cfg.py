@@ -392,3 +392,47 @@ class HimalayaTeacher23EnvCfg(HimalayaTeacherV2EnvCfg):
         # "torso_link", same as stock, so these carry over unchanged.
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 4: fix the yaw-authority bug that collapsed run 3.
+# ---------------------------------------------------------------------------
+#
+# Run 3 failed hard: terrain curriculum fell 0.093 -> 0.000 over ~250
+# iterations, 62% of episodes ended in falls, and error_vel_yaw hit 3.65
+# (run 1 held ~0.5). The robot could not turn.
+#
+# Cause: this G1 variant has waist YAW ONLY -- no waist pitch or roll. Yaw
+# authority therefore rests on exactly two mechanisms: waist_yaw_joint and
+# the hip yaw joints. Run 3 penalized BOTH:
+#   - joint_deviation_torso was remapped onto waist_yaw_joint, pinning the
+#     single dedicated yaw joint to zero
+#   - joint_deviation_hip (-0.1, and the largest penalty at -0.032) covers
+#     ".*_hip_yaw_joint" alongside hip roll
+# So the policy was charged for using the only two things that let it turn,
+# never tracked the yaw command, never traveled far enough for promotion,
+# and got demoted to the floor.
+#
+# The stock 37-DOF G1 has a full 3-DOF waist, which is why run 1 never hit
+# this. The remap was mechanically correct and behaviorally wrong.
+
+
+@configclass
+class HimalayaRewards23V2(HimalayaRewards23):
+    """Run-3 rewards with yaw authority freed."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Do not pin the only dedicated yaw joint. Turning requires moving it.
+        self.joint_deviation_torso = None
+        # Hip term covers hip yaw as well as hip roll. Keep a light posture
+        # anchor rather than a penalty that dominates the reward.
+        self.joint_deviation_hip.weight = -0.02
+
+
+@configclass
+class HimalayaTeacher23V2EnvCfg(HimalayaTeacher23EnvCfg):
+    """Run 4: 23-DOF G1 with yaw authority restored."""
+
+    rewards: HimalayaRewards23V2 = HimalayaRewards23V2()
+
+
