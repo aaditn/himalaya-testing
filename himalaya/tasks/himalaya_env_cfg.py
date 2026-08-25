@@ -436,3 +436,113 @@ class HimalayaTeacher23V2EnvCfg(HimalayaTeacher23EnvCfg):
     rewards: HimalayaRewards23V2 = HimalayaRewards23V2()
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 5: fix the arm gains. This was the real cause of runs 3 and 4 failing.
+# ---------------------------------------------------------------------------
+#
+# Runs 3 and 4 both collapsed: terrain curriculum fell to ~0, 60-73% of
+# episodes ended in base_contact, error_vel_yaw sat above 3.0.
+#
+# I first blamed yaw penalties (run 4 removed them). That was wrong -- run 4
+# failed identically. Comparing reward terms against run 1 at the same
+# iteration made the actual cause obvious:
+#
+#     term                  run 1 (works)   run 4 (fails)
+#     flat_orientation_l2      -0.0011        -0.3866    350x
+#     action_rate_l2           -0.0045        -0.1312     29x
+#     dof_acc_l2               -0.0024        -0.0985     41x
+#
+# flat_orientation_l2 penalizes torso tilt, and it was the single largest
+# penalty in the run -- larger than termination. The robot was not failing to
+# TURN, it was failing to STAY UPRIGHT. High yaw error was a symptom of a body
+# tumbling on the ground, not a cause.
+#
+# Source: the arm PD gains I invented. I set shoulders to stiffness 40 and
+# elbows to 20, reasoning that "stiff arms are dead weight" and compliant arms
+# could swing for balance. NVIDIA's own G1 config uses stiffness 3000 -- 75x
+# higher. Ten arm joints hanging near-limp on a robot with only yaw at the
+# waist let the upper body flop, which dragged the torso off vertical and
+# pulled it over.
+#
+# The lesson for the arms-for-balance question: arms cannot contribute to
+# balance if they cannot hold themselves up first. Compliance has to come from
+# the policy commanding motion, not from gains too weak to resist gravity.
+#
+# Also adding `armature` (rotor inertia), which the stock config sets on every
+# joint and I omitted -- it stabilizes the solver at high stiffness.
+
+G1_23DOF_CFG_V2 = G1_23DOF_CFG.copy()
+G1_23DOF_CFG_V2.actuators = {
+    "legs": ImplicitActuatorCfg(
+        joint_names_expr=[".*_hip_.*", ".*_knee_joint", "waist_yaw_joint"],
+        effort_limit=300, velocity_limit=100,
+        stiffness={
+            ".*_hip_yaw_joint": 150.0,
+            ".*_hip_roll_joint": 150.0,
+            ".*_hip_pitch_joint": 200.0,
+            ".*_knee_joint": 200.0,
+            "waist_yaw_joint": 200.0,
+        },
+        damping={
+            ".*_hip_yaw_joint": 5.0,
+            ".*_hip_roll_joint": 5.0,
+            ".*_hip_pitch_joint": 5.0,
+            ".*_knee_joint": 5.0,
+            "waist_yaw_joint": 5.0,
+        },
+        armature={
+            ".*_hip_.*": 0.01,
+            ".*_knee_joint": 0.01,
+            "waist_yaw_joint": 0.01,
+        },
+    ),
+    "feet": ImplicitActuatorCfg(
+        joint_names_expr=[".*_ankle_.*"],
+        effort_limit=20, stiffness=20.0, damping=2.0, armature=0.01,
+    ),
+    # Stiffness 3000 matches NVIDIA's G1. Arms hold their commanded pose
+    # rather than flopping; the policy still moves them by commanding new
+    # targets, which is where balancing motion has to come from.
+    "arms": ImplicitActuatorCfg(
+        joint_names_expr=[".*_shoulder_.*", ".*_elbow_joint", ".*_wrist_roll_joint"],
+        effort_limit=300, velocity_limit=100,
+        stiffness=3000.0, damping=10.0,
+        armature={
+            ".*_shoulder_.*": 0.001,
+            ".*_elbow_joint": 0.001,
+            ".*_wrist_roll_joint": 0.001,
+        },
+    ),
+}
+
+
+@configclass
+class HimalayaTeacher23V3EnvCfg(HimalayaTeacher23V2EnvCfg):
+    """Run 5: 23-DOF G1 with arm gains that can actually hold the arms up."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot = G1_23DOF_CFG_V2.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+@configclass
+class HimalayaTeacher23V3EnvCfg_PLAY(HimalayaTeacher23V3EnvCfg):
+    """Small visual scene for the 23-DOF robot. Reward curves told us runs 3-5
+    were failing but not WHY; this exists to actually look at the robot."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.scene.env_spacing = 2.5
+        self.episode_length_s = 20.0
+        self.scene.terrain.max_init_terrain_level = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 3
+            self.scene.terrain.terrain_generator.num_cols = 3
+            self.scene.terrain.terrain_generator.curriculum = False
+        self.observations.policy.enable_corruption = False
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+
+
