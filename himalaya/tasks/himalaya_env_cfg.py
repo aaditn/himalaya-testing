@@ -546,3 +546,61 @@ class HimalayaTeacher23V3EnvCfg_PLAY(HimalayaTeacher23V3EnvCfg):
         self.events.push_robot = None
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 6: fix the spawn height. THIS was the actual bug behind runs 3, 4 and 5.
+# ---------------------------------------------------------------------------
+#
+# Probe run (1024 envs, V3 config) gave the number that made it obvious:
+#
+#     Mean episode length: 3.76 steps      = 0.075 s at 50 Hz
+#     Episode_Termination/base_contact: 1.0000   = 100% of episodes
+#
+# The robot hits the ground essentially at spawn. Nothing downstream of that
+# matters -- the policy never gets to act, so no reward weight, arm gain, or
+# yaw penalty could ever have fixed it. I spent three runs tuning rewards for
+# a robot that was already on the floor.
+#
+# Cause: I set pos=(0, 0, 0.79) from the URDF's nominal standing height.
+# Isaac Lab's own G1 spawns at 1.05. The default pose has bent knees
+# (knee 0.3 rad, hip_pitch -0.1), so the pelvis sits HIGHER above the feet
+# than the straight-leg figure suggests. At 0.79 the feet start below the
+# ground plane; the contact solver ejects the robot, torso_link registers a
+# contact, and the episode terminates immediately.
+#
+# Symptoms this explains, which I misread three times:
+#   - error_vel_yaw 3.65  -> a tumbling body, not a turning failure (run 3/4)
+#   - flat_orientation_l2 -0.39 -> lying on the ground, not floppy arms (run 5)
+#   - 62% -> 73% -> 99.8% base_contact as I "fixed" unrelated things
+#
+# Matching NVIDIA's 1.05 exactly rather than guessing again.
+
+
+@configclass
+class HimalayaTeacher23V4EnvCfg(HimalayaTeacher23V3EnvCfg):
+    """Run 6: spawn the robot above the ground instead of inside it."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.robot.init_state.pos = (0.0, 0.0, 1.05)
+
+
+@configclass
+class HimalayaTeacher23V4EnvCfg_PLAY(HimalayaTeacher23V4EnvCfg):
+    """Small visual scene for the fixed 23-DOF robot."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.scene.env_spacing = 2.5
+        self.episode_length_s = 20.0
+        self.scene.terrain.max_init_terrain_level = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 3
+            self.scene.terrain.terrain_generator.num_cols = 3
+            self.scene.terrain.terrain_generator.curriculum = False
+        self.observations.policy.enable_corruption = False
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
+
+
