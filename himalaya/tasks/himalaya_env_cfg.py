@@ -604,3 +604,63 @@ class HimalayaTeacher23V4EnvCfg_PLAY(HimalayaTeacher23V4EnvCfg):
         self.events.push_robot = None
 
 
+##
+# ---------------------------------------------------------------------------
+# Run 7: stop terminating on torso contact. The arms were killing the episode.
+# ---------------------------------------------------------------------------
+#
+# V4 (spawn fixed to 1.05) still ended 100% of episodes in base_contact, but
+# its own numbers rule out falling:
+#
+#     flat_orientation_l2: -0.0203     (run 5, actually falling: -0.3866)
+#     error_vel_yaw:        0.76       (runs 3/4, tumbling: 3.65)
+#
+# The robot is UPRIGHT. It is not falling over -- something is simply touching
+# torso_link, and the termination fires on frame one.
+#
+# On the 23-DOF variant the arms mount directly on torso_link, and we run with
+# enabled_self_collisions=True plus arm stiffness 3000 holding them rigid in
+# the spawn pose. An upper arm resting against the torso is a permanent
+# contact, so the episode dies immediately regardless of what the policy does.
+#
+# Two changes:
+#   1. Terminate on PELVIS contact, not torso. The pelvis only touches the
+#      ground if the robot has actually fallen, which is what we mean.
+#   2. Open the arms out at spawn (shoulder_roll 0.2 -> 0.35) so they hang
+#      clear of the body rather than against it.
+#
+# Keeping self-collisions ON: arms passing through the torso would be worse
+# than this bug, and the whole project is about what the arms do.
+
+
+@configclass
+class HimalayaTeacher23V5EnvCfg(HimalayaTeacher23V4EnvCfg):
+    """Run 7: terminate on real falls, and spawn the arms clear of the torso."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        # A pelvis contact means the robot is on the ground. A torso contact
+        # just means an arm is near the chest.
+        self.terminations.base_contact.params["sensor_cfg"].body_names = ["pelvis"]
+        self.scene.robot.init_state.joint_pos = {
+            **self.scene.robot.init_state.joint_pos,
+            "left_shoulder_roll_joint": 0.35,
+            "right_shoulder_roll_joint": -0.35,
+        }
+
+
+@configclass
+class HimalayaTeacher23V5EnvCfg_PLAY(HimalayaTeacher23V5EnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16
+        self.scene.env_spacing = 2.5
+        self.episode_length_s = 20.0
+        self.scene.terrain.max_init_terrain_level = None
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.num_rows = 3
+            self.scene.terrain.terrain_generator.num_cols = 3
+            self.scene.terrain.terrain_generator.curriculum = False
+        self.observations.policy.enable_corruption = False
+        self.events.base_external_force_torque = None
+        self.events.push_robot = None
