@@ -1,8 +1,8 @@
 """Does the 23-DOF G1 stand on flat ground holding its default pose?
 
-This is the test the Isaac Lab work never got a clean answer to. No policy,
-no terrain, no rewards -- hold the nominal pose with the PD controllers and
-see whether the robot stays upright.
+No policy, no terrain, no rewards -- hold the nominal pose with the PD
+controllers and see whether the robot stays upright. If this fails, the model
+is wrong and no amount of reward tuning will help.
 
 Usage:  .venv/bin/python scripts/inspect_model.py
 """

@@ -5,12 +5,12 @@
 #   ./scripts/pull.sh --policies   # also pull checkpoints, for the local viewer
 #   ./scripts/pull.sh --no-open    # pull but don't open anything
 #
-# Pod details live in scripts/pod.env so only one file changes per pod.
+# Pod details live in scripts/pod/pod.env so only one file changes per pod.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-[ -f scripts/pod.env ] || { echo "missing scripts/pod.env -- see pod.env.example"; exit 1; }
-source scripts/pod.env
+[ -f scripts/pod/pod.env ] || { echo "missing scripts/pod/pod.env -- see pod.env.example"; exit 1; }
+source scripts/pod/pod.env
 
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=30 -p $POD_PORT -i $POD_KEY"
 mkdir -p videos runs

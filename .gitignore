@@ -4,6 +4,6 @@ logs/
 runs/
 checkpoints/
 *.pt
-scripts/pod.env
+scripts/pod/pod.env
 .venv/
 videos/

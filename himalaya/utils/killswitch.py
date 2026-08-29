@@ -90,7 +90,7 @@ class KillSwitch:
             ),
             "track_lin_vel": (
                 "Primary objective is not improving. Run "
-                "`preflight.py --test reward-audit` -- a competing term is likely "
+                "the reward scales -- a competing term is likely "
                 "swamping velocity tracking."
             ),
         }.get(metric, "")

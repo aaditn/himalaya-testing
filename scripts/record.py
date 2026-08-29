@@ -1,7 +1,7 @@
 """Render a trained policy to MP4 on the pod.
 
-    python scripts/record.py runs/ice_120000/policy --out videos/ice.mp4
-    python scripts/record.py runs/ice_120000/policy --friction 0.08 --seconds 12
+    python scripts/record.py runs/g1_120000/policy --out videos/walk.mp4
+    python scripts/record.py runs/g1_120000/policy --seconds 12
 
 Renders offscreen on the GPU -- no display needed -- so it works while
 training is running. Pull the result with scripts/pull_videos.sh.
@@ -19,8 +19,8 @@ def main():
     ap.add_argument("policy", help="path to a saved brax params file")
     ap.add_argument("--out", default=None)
     ap.add_argument("--seconds", type=float, default=10.0)
-    ap.add_argument("--friction", type=float, default=0.1,
-                    help="floor friction to render at (0.1 = ice, 0.8 = dry)")
+    ap.add_argument("--friction", type=float, default=0.8,
+                    help="floor friction to render at")
     ap.add_argument("--vx", type=float, default=0.8, help="commanded forward vel")
     ap.add_argument("--vy", type=float, default=0.0)
     ap.add_argument("--wz", type=float, default=0.0, help="commanded yaw rate")
@@ -43,14 +43,16 @@ def main():
     from brax.training.agents.ppo import networks as ppo_networks
     from mujoco_playground import registry
 
-    from himalaya.ice import ice_env
+    from scripts.train import NACONMAX, NJMAX, make_env_class
 
     task = "G1JoystickRoughTerrain" if args.rough else "G1JoystickFlatTerrain"
-    cfg = ice_env.ice_config(registry.get_default_config(task))
+    cfg = registry.get_default_config(task).copy_and_resolve_references()
+    cfg.njmax = NJMAX
+    cfg.naconmax = NACONMAX
     # Must match training: the policy was trained with strict termination
     # (height + tilt). Rendering under Playground's stock termination changes
     # where episodes end and inflates the fall count.
-    env = ice_env.patch_termination(registry.load(task, config=cfg))
+    env = make_env_class()(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
     net = ppo_networks.make_ppo_networks(
