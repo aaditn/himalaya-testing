@@ -34,6 +34,9 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
+    ap.add_argument("--no-randomization", action="store_true",
+                    help="train on fixed physics (the old behaviour). Useful "
+                         "only as a control -- see the note by randomize below.")
     args = ap.parse_args()
 
     from brax.training.agents.ppo import networks as ppo_networks
@@ -43,6 +46,7 @@ def main():
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from himalaya.env import Joystick, default_config
+    from himalaya.env import randomize as g1_randomize
 
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
@@ -58,7 +62,20 @@ def main():
     env = Joystick(task=task, config=cfg)
     eval_env = Joystick(task=task, config=cfg)
 
+    # Domain randomization. The notebook (docs/playground/notebooks/
+    # locomotion.ipynb, cell 46) passes this to ppo.train, and omitting it
+    # trains a policy against one fixed set of physics -- friction, masses and
+    # armature never vary, so nothing forces a gait that survives a different
+    # floor. Six parameters are perturbed per environment; floor/foot friction
+    # U(0.4, 1.0) is the one that changes the gait most.
+    #
+    # Expect a LOWER reward curve than a fixed-physics run. The task is
+    # genuinely harder, and the comparison that matters is robustness across a
+    # friction sweep, not the training reward.
+    randomizer = None if args.no_randomization else g1_randomize.domain_randomize
+
     print(f"run={name}  task={task}")
+    print(f"  domain randomization: {'OFF (control)' if randomizer is None else 'ON'}")
     print(f"  envs={args.envs}  timesteps={args.timesteps:,}  device={jax.devices()[0]}")
 
     history = []
@@ -114,6 +131,7 @@ def main():
             policy_obs_key="state",
             value_obs_key="privileged_state",
         ),
+        randomization_fn=randomizer,
         wrap_env_fn=wrapper.wrap_for_brax_training,
         progress_fn=progress,
         seed=0,
