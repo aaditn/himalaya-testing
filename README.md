@@ -10,6 +10,7 @@ Train a G1 humanoid to walk, in simulation, using PPO on MuJoCo MJX
 ## Layout
 
 ```
+himalaya/env/             the task: rewards, observations, termination
 himalaya/mjx/             loads the G1 from MuJoCo Menagerie
 himalaya/utils/           early-kill monitor for long jobs
 scripts/train.py          PPO training -> runs/<name>/
@@ -19,6 +20,31 @@ scripts/inspect_model.py  does the robot stand? (no policy, no rewards)
 scripts/pod/              pull results off a training pod
 runs/                     checkpoints + metrics (gitignored)
 ```
+
+## Changing the environment
+
+`himalaya/env/` is a vendored copy of MuJoCo Playground's G1 joystick task
+(Apache-2.0, see `LICENSE.playground`). It is checked in deliberately: this
+project iterates on rewards and termination, and those live in
+`himalaya/env/joystick.py` where they can simply be edited.
+
+The alternative — importing Playground's class and patching it — is worse than
+it looks. brax traces `step` through `jax.jit`, so a monkeypatch applied after
+tracing is silently ignored during training while still passing every isolated
+test. Owning the file removes that failure mode.
+
+Modifications carry a `MODIFIED:` comment. So far: stricter fall termination
+(`MAX_TILT`, `MIN_TORSO_HEIGHT` in `joystick.py`).
+
+```
+himalaya/env/joystick.py       24 reward/cost terms, observations, termination
+himalaya/env/g1_constants.py   sites, geoms, sensors, joint ranges
+himalaya/env/randomize.py      domain randomization
+himalaya/env/base.py           MJX env base
+```
+
+`mjx_env` and `gait` are still imported from Playground — generic
+infrastructure, nothing G1-specific to own.
 
 ## Quick start
 
@@ -69,8 +95,9 @@ number quoted as a fact about the robot.
 
 ## Two bugs worth knowing about
 
-Both are fixed in `scripts/train.py`, and both silently corrupt results rather
-than crashing — so they are easy to reintroduce.
+Both silently corrupt results rather than crashing, so they are easy to
+reintroduce. `njmax` is set in `scripts/train.py`; termination lives in
+`himalaya/env/joystick.py`.
 
 **Constraint overflow.** Playground ships `njmax=90`, too small for this robot.
 When the solver runs out of constraint slots it *drops contacts*, and a dropped
@@ -84,11 +111,10 @@ fallen poses instead of walking, which makes every episode-length number from
 an unpatched run meaningless. Fixed by also terminating on pelvis height and at
 ~60° of tilt.
 
-The termination override is a **subclass, not a monkeypatch**. Reassigning
-`env._get_termination` at runtime passes every isolated test, but brax traces
-the step function through `jax.jit`; if tracing captures the original bound
-method, training silently uses the stock termination while every direct test
-reports the patch as live.
+The termination fix is **an edit to the vendored file**, not a patch applied at
+runtime. Reassigning `env._get_termination` passes every isolated test but can
+be lost to `jax.jit` tracing, so training silently uses the stock rule while
+every direct test reports the patch as live.
 
 ## Gains
 

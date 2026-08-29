@@ -79,12 +79,14 @@ exist so the policy cannot learn a stable fallen pose. Whenever an
 episode-length or reward curve looks too good, suspect the termination
 condition first and watch the video second.
 
-Override behaviour in a class, never by monkeypatching a traced function.
-Reassigning `env._get_termination` at runtime passes every isolated test and
-still does nothing during training, because brax traces `step` through
-`jax.jit` and the trace captures the original bound method. Failures under
-`jax.jit` are silent and look like bad hyperparameters, so put the change
-where tracing has to see it — that is why `StrictJoystick` is a subclass.
+Edit the environment, do not patch it at runtime. `himalaya/env/` is a
+vendored copy of Playground's G1 joystick task precisely so reward terms,
+observations, and termination are ordinary edits. Reassigning a method like
+`env._get_termination` passes every isolated test and can still do nothing
+during training, because brax traces `step` through `jax.jit` and the trace
+captures the original bound method; failures under `jax.jit` are silent and
+look like bad hyperparameters. Mark every change to a vendored file with a
+`MODIFIED:` comment saying what the stock behaviour was.
 
 Watch the policy, do not only read its curves. `scripts/record.py` renders
 offscreen on the pod while training runs, `scripts/pod/pull.sh` brings the clip
@@ -139,8 +141,9 @@ the answer is phrased ambiguously.
 ## Layout
 
 `himalaya/` holds library code, `scripts/` holds entry points, `runs/` holds
-per-run checkpoints and `metrics.json`. `himalaya/mjx/g1_29dof.py` loads the
-robot from Menagerie; `himalaya/utils/killswitch.py` decides when a run is dead. Entry points
+per-run checkpoints and `metrics.json`. `himalaya/env/` is the task (vendored
+from Playground, ours to edit); `himalaya/mjx/g1_29dof.py` loads the robot from
+Menagerie; `himalaya/utils/killswitch.py` decides when a run is dead. Entry points
 are `scripts/train.py` (train), `scripts/record.py` (render to MP4 on the pod),
 `scripts/view.py` (local viewer, needs `mjpython`), and
 `scripts/inspect_model.py` (does the robot stand at all). Pod sync lives in

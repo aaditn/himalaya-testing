@@ -1,12 +1,13 @@
-"""Train the G1 to walk on normal ground.
+"""Train the G1 to walk.
 
     python scripts/train.py --timesteps 60_000_000
     python scripts/train.py --rough              # rough terrain instead of flat
 
 Writes checkpoints and a metrics log to runs/<name>/.
 
-Built on MuJoCo Playground's G1 joystick task with stock domain randomization
-(floor/foot friction U(0.4, 1.0)).
+Uses the vendored env in himalaya/env/, not Playground's registry. Rewards,
+observations, and termination all live in himalaya/env/joystick.py, so change
+them there directly.
 """
 import argparse
 import functools
@@ -25,38 +26,6 @@ import jax
 NJMAX = 160
 NACONMAX = 131072
 
-# Playground's stock G1 terminates only when the torso passes horizontal
-# (gravity_z < 0.0). A robot that tips to 89 degrees, or lands on its back and
-# settles, never trips that -- it lies there collecting reward, and MJX's
-# low-iteration contact solver lets a prone 34 kg body sink partway through the
-# floor. The policy then learns stable fallen poses instead of walking, which
-# makes every episode-length number meaningless.
-MIN_TORSO_HEIGHT = 0.4   # metres; nominal standing pelvis is ~0.79
-MAX_TILT = 0.5           # gravity-z; 1.0 = upright, 0.0 = horizontal
-
-
-def make_env_class():
-    """Joystick subclass with strict termination.
-
-    Subclassed rather than monkeypatched: reassigning env._get_termination at
-    runtime passes every isolated test, but brax traces the step function
-    through jax.jit, and if tracing captures the original bound method training
-    silently uses the stock termination. Overriding in the class removes the
-    question. Imported lazily so this module stays importable without a GPU.
-    """
-    from mujoco_playground._src.locomotion.g1.joystick import Joystick
-
-    class StrictJoystick(Joystick):
-        def _get_termination(self, data):
-            done = super()._get_termination(data)
-            # ~60 degrees rather than 90: no loitering at the boundary.
-            done = done | (self.get_gravity(data, "torso")[-1] < MAX_TILT)
-            # Pelvis on the ground is down, whatever the orientation.
-            done = done | (data.qpos[2] < MIN_TORSO_HEIGHT)
-            return done
-
-    return StrictJoystick
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -69,10 +38,16 @@ def main():
 
     from brax.training.agents.ppo import networks as ppo_networks
     from brax.training.agents.ppo import train as ppo
-    from mujoco_playground import registry, wrapper
+    from mujoco_playground import wrapper
 
-    task = "G1JoystickRoughTerrain" if args.rough else "G1JoystickFlatTerrain"
-    cfg = registry.get_default_config(task).copy_and_resolve_references()
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from himalaya.env import Joystick, default_config
+
+    # Names the vendored env uses directly; Playground's registry was
+    # translating its public "G1Joystick*Terrain" ids onto these.
+    task = "rough_terrain" if args.rough else "flat_terrain"
+    cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
 
@@ -80,9 +55,8 @@ def main():
     out = Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
 
-    EnvClass = make_env_class()
-    env = EnvClass(task=task, config=cfg)
-    eval_env = EnvClass(task=task, config=cfg)
+    env = Joystick(task=task, config=cfg)
+    eval_env = Joystick(task=task, config=cfg)
 
     print(f"run={name}  task={task}")
     print(f"  envs={args.envs}  timesteps={args.timesteps:,}  device={jax.devices()[0]}")

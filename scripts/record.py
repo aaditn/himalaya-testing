@@ -41,18 +41,18 @@ def main():
     import numpy as np
     from brax.io import model as brax_model
     from brax.training.agents.ppo import networks as ppo_networks
-    from mujoco_playground import registry
+    from himalaya.env import Joystick, default_config
 
-    from scripts.train import NACONMAX, NJMAX, make_env_class
-
-    task = "G1JoystickRoughTerrain" if args.rough else "G1JoystickFlatTerrain"
-    cfg = registry.get_default_config(task).copy_and_resolve_references()
+    # Same env as training -- himalaya/env/ is the single definition, so a
+    # reward or termination change cannot drift between train and record.
+    NJMAX, NACONMAX = 160, 131072
+    # Names the vendored env uses directly; Playground's registry was
+    # translating its public "G1Joystick*Terrain" ids onto these.
+    task = "rough_terrain" if args.rough else "flat_terrain"
+    cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
-    # Must match training: the policy was trained with strict termination
-    # (height + tilt). Rendering under Playground's stock termination changes
-    # where episodes end and inflates the fall count.
-    env = make_env_class()(task=task, config=cfg)
+    env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
     net = ppo_networks.make_ppo_networks(
