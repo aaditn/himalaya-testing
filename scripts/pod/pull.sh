@@ -19,14 +19,16 @@ echo "pulling videos..."
 $SSH "$POD_USER@$POD_HOST" 'cd /workspace && tar cf - videos 2>/dev/null' | tar xf - 2>/dev/null || true
 
 echo "pulling metrics..."
-$SSH "$POD_USER@$POD_HOST" 'cd /workspace && tar cf - $(find runs -name "metrics.json" 2>/dev/null) 2>/dev/null' | tar xf - 2>/dev/null || true
+# runs/ lives under the deployed project, not /workspace -- training writes
+# to himalaya_proj/runs. Reading /workspace/runs pulls pre-deploy leftovers.
+$SSH "$POD_USER@$POD_HOST" 'cd /workspace/himalaya_proj && tar cf - $(find runs -name "metrics.json" 2>/dev/null) 2>/dev/null' | tar xf - 2>/dev/null || true
 
 OPEN=1
 for a in "$@"; do [ "$a" = "--no-open" ] && OPEN=0; done
 
 if [[ " $* " == *" --policies "* ]]; then
   echo "pulling checkpoints..."
-  $SSH "$POD_USER@$POD_HOST" 'cd /workspace && tar cf - $(find runs -name "policy*" 2>/dev/null) 2>/dev/null' | tar xf - 2>/dev/null || true
+  $SSH "$POD_USER@$POD_HOST" 'cd /workspace/himalaya_proj && tar cf - $(find runs -name "policy*" 2>/dev/null) 2>/dev/null' | tar xf - 2>/dev/null || true
 fi
 
 echo

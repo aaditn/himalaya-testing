@@ -29,7 +29,7 @@ NACONMAX = 131072
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--timesteps", type=int, default=60_000_000)
+    ap.add_argument("--timesteps", type=int, default=200_000_000)
     ap.add_argument("--envs", type=int, default=8192)
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
@@ -91,8 +91,12 @@ def main():
         num_updates_per_batch=4,
         discounting=0.97,
         learning_rate=3e-4,
-        entropy_cost=1e-2,
+        # Playground's tuned G1 values (config/locomotion_params.py). 1e-2 is
+        # the generic locomotion default and leaves too much exploration noise
+        # for this robot.
+        entropy_cost=0.005,
         clipping_epsilon=0.2,
+        num_resets_per_eval=1,
         action_repeat=1,
         max_grad_norm=1.0,
         normalize_observations=True,
@@ -101,6 +105,14 @@ def main():
             ppo_networks.make_ppo_networks,
             policy_hidden_layer_sizes=(512, 256, 128),
             value_hidden_layer_sizes=(512, 256, 128),
+            # The critic reads privileged_state (216 dims: contact forces,
+            # true velocities, friction) while the actor reads state (103).
+            # Without these keys brax defaults both to "state", so the value
+            # function trains on the actor's partial view and its estimates
+            # are much worse than they need to be -- this is asymmetric
+            # actor-critic, and omitting it costs real sample efficiency.
+            policy_obs_key="state",
+            value_obs_key="privileged_state",
         ),
         wrap_env_fn=wrapper.wrap_for_brax_training,
         progress_fn=progress,
