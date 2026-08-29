@@ -31,6 +31,7 @@ import jax
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
+import numpy as np
 
 from mujoco_playground._src import mjx_env
 from himalaya.env import g1_constants as consts
@@ -69,6 +70,33 @@ class G1Env(mjx_env.MjxEnv):
 
     self._mj_model.vis.global_.offwidth = 3840
     self._mj_model.vis.global_.offheight = 2160
+
+    # MODIFIED: tilt the floor for the climbing task.
+    #
+    # One slope per run rather than per environment. geom_quat IS vmappable --
+    # it is (ngeom, 4), the same per-geom class of field as body_mass that
+    # domain_randomize already batches -- but a per-env angle would have to be
+    # sampled in BOTH randomize.py (for the physics) and reset (for the reward's
+    # uphill direction), and those two RNGs do not share state. They would
+    # silently disagree. Fixing the slope per run makes the normal a
+    # compile-time constant, free under jit, and every metric in a run
+    # attributable to one angle.
+    self._slope_rad = float(np.deg2rad(self._config.slope_deg))
+    floor_gid = self._mj_model.geom("floor").id
+    # Rotate about +Y so the slope rises along +X: uphill is +X.
+    half = 0.5 * self._slope_rad
+    self._mj_model.geom_quat[floor_gid] = [np.cos(half), 0.0, np.sin(half), 0.0]
+    # Surface normal and up-gradient direction, both in world coords. Derived
+    # from the same angle as the quat above, so they cannot drift apart.
+    self._slope_normal = np.array(
+        [np.sin(self._slope_rad), 0.0, np.cos(self._slope_rad)]
+    )
+    # Rotating about +Y drops the surface along +X, so up-gradient is -X.
+    # (Verified: uphill.z must be POSITIVE -- a downhill vector here would make
+    # progress_uphill pay the policy for sliding to the bottom.)
+    self._uphill = np.array(
+        [-np.cos(self._slope_rad), 0.0, np.sin(self._slope_rad)]
+    )
 
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._xml_path = xml_path

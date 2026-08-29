@@ -111,6 +111,9 @@ def default_config() -> config_dict.ConfigDict:
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
+      # Floor tilt in degrees, applied to the floor geom at load time (see
+      # base.py). 0.0 leaves every existing scene exactly as it was.
+      slope_deg=0.0,
       impl="warp",
       naconmax=8 * 8192,
       njmax=29 * 2 + 8 * 4,
