@@ -4,7 +4,7 @@
     python scripts/record.py runs/g1_120000/policy --seconds 12
 
 Renders offscreen on the GPU -- no display needed -- so it works while
-training is running. Pull the result with scripts/pull_videos.sh.
+training is running. Pull the result with scripts/pod/pull.sh.
 """
 import argparse
 import functools

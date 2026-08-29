@@ -27,12 +27,13 @@ def main():
     args = ap.parse_args()
 
     if args.menagerie:
-        from mujoco_playground import registry  # noqa: F401  (ensures menagerie present)
-        from etils import epath
-        import mujoco_playground as mp
-        root = epath.Path(mp.__file__).parent / "external_deps" / "mujoco_menagerie"
-        model = mujoco.MjModel.from_xml_path(str(root / "unitree_g1" / "scene.xml"))
-        label = "menagerie unitree_g1"
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+        from himalaya.mjx import g1_29dof
+        # Full-fidelity scene: this one actually holds a pose open-loop.
+        model = mujoco.MjModel.from_xml_path(g1_29dof.scene_path(mjx=False))
+        label = "menagerie unitree_g1 (29-DOF)"
     else:
         from mujoco_playground import registry
         name = "G1JoystickFlatTerrain" if args.flat else "G1JoystickRoughTerrain"

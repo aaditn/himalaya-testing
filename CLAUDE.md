@@ -43,11 +43,11 @@ than smuggling it into the current one.
 ## Robotics
 
 Measure the robot, do not copy its numbers. Every constant that describes
-this G1 came out of MuJoCo and is written down where it is used: 30.32 kg
-total, 0.784 m standing height measured from the lowest foot geom, arms at
-20.1% of mass. An earlier attempt used 1.05 m for standing height because it
-was in NVIDIA's 37-DOF config, which spawned this robot 27 cm in the air and
-made it land on every reset. When you need a physical quantity, get it from
+this G1 came out of MuJoCo and is written down where it is used: 33.34 kg
+total, 0.784 m standing height from Menagerie's keyframe, 29 actuated joints.
+An earlier attempt used 1.05 m for standing height because it was in NVIDIA's
+37-DOF config, which spawned the robot 27 cm in the air and made it land on
+every reset. When you need a physical quantity, get it from
 `scripts/inspect_model.py` and cite the number in a comment next to the
 constant.
 
@@ -59,9 +59,13 @@ a 139 Nm limit while folding 1.44 rad past its target. Treat any borrowed
 gain, friction, or timestep as a hypothesis until it holds the robot up in
 *this* simulator.
 
-Check the physics before the reward. `scripts/inspect_model.py` holds the
-nominal pose with no policy, no terrain, and no reward terms, and if the robot
-will not stand there then nothing downstream is interpretable. Same reasoning
+Check the physics before the reward, and on the right scene. Menagerie ships
+two: `scene_mjx.xml` (5 solver iterations, simplified colliders) is for batched
+training where a policy closes the loop every step, and it will NOT hold a pose
+open-loop -- the robot drops to z=0.11 in 1.5 s, which is a solver artifact
+rather than a broken model. `scene.xml` (100 iterations) stands at z=0.792.
+`scripts/inspect_model.py` uses the latter deliberately; judge physics there,
+and never quote a number measured on the MJX scene as a fact about the robot. Same reasoning
 behind `njmax = 160`: Playground ships 90, the G1 overflowed it 2,580 times in
 one run, and an overflowed constraint solver silently *drops contacts* — a
 dropped foot contact means nothing holds the robot up that step. A solver
@@ -135,8 +139,8 @@ the answer is phrased ambiguously.
 ## Layout
 
 `himalaya/` holds library code, `scripts/` holds entry points, `runs/` holds
-per-run checkpoints and `metrics.json`. `himalaya/mjx/g1_model.py` builds the
-MJCF; `himalaya/utils/killswitch.py` decides when a run is dead. Entry points
+per-run checkpoints and `metrics.json`. `himalaya/mjx/g1_29dof.py` loads the
+robot from Menagerie; `himalaya/utils/killswitch.py` decides when a run is dead. Entry points
 are `scripts/train.py` (train), `scripts/record.py` (render to MP4 on the pod),
 `scripts/view.py` (local viewer, needs `mjpython`), and
 `scripts/inspect_model.py` (does the robot stand at all). Pod sync lives in

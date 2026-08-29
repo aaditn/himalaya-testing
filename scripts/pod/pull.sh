@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pull videos + checkpoints from the training pod to this Mac.
 #
-#   ./scripts/pull.sh              # videos + metrics, opens the newest clip
-#   ./scripts/pull.sh --policies   # also pull checkpoints, for the local viewer
-#   ./scripts/pull.sh --no-open    # pull but don't open anything
+#   ./scripts/pod/pull.sh              # videos + metrics, opens the newest clip
+#   ./scripts/pod/pull.sh --policies   # also pull checkpoints, for the local viewer
+#   ./scripts/pod/pull.sh --no-open    # pull but don't open anything
 #
 # Pod details live in scripts/pod/pod.env so only one file changes per pod.
 set -euo pipefail

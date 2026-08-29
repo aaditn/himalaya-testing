@@ -1,6 +1,6 @@
 # himalaya
 
-RL locomotion for the Unitree G1 (23-DOF). Sim-only.
+RL locomotion for the Unitree G1 (29-DOF). Sim-only.
 
 ## What this is
 
@@ -10,8 +10,7 @@ Train a G1 humanoid to walk, in simulation, using PPO on MuJoCo MJX
 ## Layout
 
 ```
-assets/g1/                robot model: URDF + meshes (from unitree_ros)
-himalaya/mjx/             builds a simulation-ready model from the raw URDF
+himalaya/mjx/             loads the G1 from MuJoCo Menagerie
 himalaya/utils/           early-kill monitor for long jobs
 scripts/train.py          PPO training -> runs/<name>/
 scripts/record.py         render a trained policy to MP4
@@ -38,21 +37,35 @@ must own the main thread:
 
 ## The robot
 
-23 DOF = 12 leg + 1 waist yaw + 10 arm (5 per arm). Waist **yaw only** — no
-pitch or roll — so torso balance authority is limited.
+MuJoCo Menagerie's `unitree_g1`, vendored inside MuJoCo Playground — the same
+model Playground's own G1 tasks use, so training and inspection share one
+robot and there is no URDF conversion step.
 
-Measured from the model itself (`scripts/inspect_model.py`), not assumed:
+29 DOF = 12 leg + 3 waist + 14 arm (7 per arm). The 3-DOF waist gives real
+torso balance authority.
+
+Measured from the model (`scripts/inspect_model.py`), not assumed:
 
 ```
-total mass         30.32 kg
-arm mass            6.10 kg   (20.1% of total)
-leg mass           14.37 kg
-standing height     0.784 m   <- lowest foot geom below the pelvis frame
+actuated joints        29
+total mass          33.34 kg
+standing height      0.784 m   <- Menagerie's standing keyframe
 ```
 
-That last number matters: an earlier attempt used 1.05 m, copied from NVIDIA's
-37-DOF G1 config. On this robot that spawns it ~27 cm in the air, so it drops
-and lands on every reset.
+Spawn height comes from the keyframe rather than a guess. An earlier attempt
+used 1.05 m, copied from NVIDIA's 37-DOF config, which spawned the robot ~27 cm
+in the air so it dropped and landed on every reset.
+
+### Two scenes, not interchangeable
+
+`scene_mjx.xml` — 5 solver iterations, simplified colliders, 4 ms timestep.
+What training uses. It will **not** hold a pose open-loop: the standing
+keyframe drops to z=0.11 within 1.5 s. That is a solver artifact of a scene
+built for batched rollouts where a policy closes the loop every step.
+
+`scene.xml` — 100 solver iterations, 2 ms timestep. The same open-loop test
+stands at z=0.792, upright=1.000. Use it for inspection, viewing, and any
+number quoted as a fact about the robot.
 
 ## Two bugs worth knowing about
 
@@ -77,20 +90,17 @@ the step function through `jax.jit`; if tracing captures the original bound
 method, training silently uses the stock termination while every direct test
 reports the patch as live.
 
-## PD gains
+## Gains
 
-Tuned here, not copied. `unitree_rl_gym`'s published values (hip 100, knee 150,
-ankle 40) do not hold this robot up in MuJoCo — the legs collapse under 34 kg in
-half a second. Those gains assume an implicit actuator, which applies the PD law
-differently from a MuJoCo position servo.
+Menagerie ships tuned position servos (gain 75, damping 2 on the hips) and
+sets rotor inertia itself, so there is nothing to tune before training. Gains
+do not transfer across simulators — `unitree_rl_gym`'s published values assume
+an implicit actuator, which applies the PD law differently from a MuJoCo
+position servo — so treat any borrowed gain as a hypothesis until it holds the
+robot up here.
 
-Rotor inertia (`armature = 0.01`) matters more than the gains did. Ours was 0,
-which makes effective joint inertia tiny and any stiff PD controller numerically
-unstable — the reason the robot collapsed identically across a 12-point gain
-sweep.
-
-Re-run `scripts/inspect_model.py` after any change to either; it prints the
-settle trace and a stand/collapse verdict.
+Re-run `scripts/inspect_model.py` after any model change; it prints the settle
+trace and a stand/collapse verdict.
 
 ## Cost discipline
 
