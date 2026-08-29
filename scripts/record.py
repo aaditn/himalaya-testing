@@ -75,6 +75,13 @@ def main():
     inference = ppo_networks.make_inference_fn(net)(params, deterministic=True)
     inference = jax.jit(inference)
 
+    # Friction must be set on the model that gets STEPPED, before the rollout.
+    # Setting it on env.mj_model afterwards only changes what is drawn, so the
+    # clip would show a "slippery" floor the physics never used.
+    env._mjx_model = env._mjx_model.tree_replace(
+        {"pair_friction": env._mjx_model.pair_friction.at[0:2, 0:2].set(args.friction)}
+    )
+
     reset = jax.jit(env.reset)
     step = jax.jit(env.step)
 
@@ -96,7 +103,7 @@ def main():
             state.info["command"] = jp.array([args.vx, args.vy, args.wz])
             slips += 1
 
-    # Set the floor friction we want to SHOW (rendering only).
+    # Match the rendered model to the simulated one.
     mj_model = env.mj_model
     mj_model.pair_friction[0:2, 0:2] = args.friction
 
