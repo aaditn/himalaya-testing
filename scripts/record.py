@@ -40,6 +40,7 @@ def main():
     import mujoco
     import numpy as np
     from brax.io import model as brax_model
+    from brax.training.acme import running_statistics
     from brax.training.agents.ppo import networks as ppo_networks
     from himalaya.env import Joystick, default_config
 
@@ -55,10 +56,20 @@ def main():
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
+    # preprocess_observations_fn is NOT optional. brax defaults it to identity,
+    # but training ran with normalize_observations=True, so the policy learned
+    # on normalized observations. Omitting it here loads the normalizer params
+    # (params[0], a RunningStatisticsState) and then ignores them, feeding the
+    # policy raw inputs. It fails silently: no error, just a policy that looks
+    # bad. Measured on the same checkpoint: mean episode length 70 without
+    # this line, 905 with it.
     net = ppo_networks.make_ppo_networks(
         env.observation_size, env.action_size,
         policy_hidden_layer_sizes=(512, 256, 128),
         value_hidden_layer_sizes=(512, 256, 128),
+        policy_obs_key="state",
+        value_obs_key="privileged_state",
+        preprocess_observations_fn=running_statistics.normalize,
     )
     params = brax_model.load_params(args.policy)
     inference = ppo_networks.make_inference_fn(net)(params, deterministic=True)
