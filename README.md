@@ -38,13 +38,21 @@ Modifications carry a `MODIFIED:` comment. So far: stricter fall termination
 
 ```
 himalaya/env/joystick.py       24 reward/cost terms, observations, termination
+himalaya/env/gait.py           swing-foot height curve (stride shape)
 himalaya/env/g1_constants.py   sites, geoms, sensors, joint ranges
 himalaya/env/randomize.py      domain randomization
+himalaya/env/xmls/             scenes: terrain, floor, sensors, collision geometry
 himalaya/env/base.py           MJX env base
 ```
 
-`mjx_env` and `gait` are still imported from Playground — generic
-infrastructure, nothing G1-specific to own.
+`ROOT_PATH` points at the local `xmls/`, so editing a scene changes the
+physics — verified by setting floor friction to 0.02 and reading it back
+through the env.
+
+Only `mjx_env` is still imported from Playground: `MjxEnv`, `State`, `step`,
+`make_data`, `update_assets`, `MENAGERIE_PATH`. That is plumbing — nothing you
+would tune for a locomotion result lives in it. Robot meshes still load from
+Menagerie.
 
 ## Quick start
 

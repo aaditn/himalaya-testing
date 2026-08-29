@@ -28,7 +28,15 @@ from etils import epath
 
 from mujoco_playground._src import mjx_env
 
-ROOT_PATH = mjx_env.ROOT_PATH / "locomotion" / "g1"
+# MODIFIED: was mjx_env.ROOT_PATH / "locomotion" / "g1", i.e. the copy inside
+# site-packages. Points at our own xmls/ so terrain, sensors, and collision
+# geometry are editable here rather than in the library.
+#
+# The mesh paths inside those XMLs still read "../../../mujoco_menagerie/...",
+# which looks broken but is not: base.py loads every asset by NAME into a dict
+# (see update_assets), pulling the STLs from MENAGERIE_PATH separately, so the
+# relative strings are never resolved against the filesystem.
+ROOT_PATH = epath.Path(__file__).parent
 FEET_ONLY_FLAT_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_flat_terrain.xml"
 )

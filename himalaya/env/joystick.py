@@ -33,7 +33,7 @@ from mujoco import mjx
 from mujoco.mjx._src import math
 import numpy as np
 
-from mujoco_playground._src import gait
+from himalaya.env import gait
 from mujoco_playground._src import mjx_env
 from himalaya.env import base as g1_base
 from himalaya.env import g1_constants as consts
