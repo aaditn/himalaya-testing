@@ -12,7 +12,7 @@ Measured facts (from MuJoCo, not assumed -- see scripts/inspect_model.py):
   inertias           all valid (positive, triangle inequality holds)
   STANDING HEIGHT    0.784 m   <- lowest foot geom below the pelvis frame
 
-That last number matters: the Isaac Lab runs used 1.05 m, copied from
+That last number matters: an earlier attempt used 1.05 m, copied from
 NVIDIA's 37-DOF G1 config. On this robot that spawns it ~27 cm in the air,
 so it drops and lands every reset. Everything here uses the measured value.
 """
@@ -30,14 +30,14 @@ EFFORT = {
     "shoulder": 25.0, "elbow": 25.0, "wrist": 25.0,
 }
 
-# PD gains, tuned HERE rather than copied from Isaac Lab.
+# PD gains, tuned HERE rather than borrowed.
 #
 # unitree_rl_gym's published values (hip 100, knee 150, ankle 40) do not hold
 # this robot up in MuJoCo: with them the knee commands only 45 Nm against a
 # 139 Nm limit while folding to 1.44 rad past a 0.30 rad target -- the legs
-# collapse under 34 kg in half a second. Those gains assume Isaac Lab's
-# implicit actuator, which applies the PD law differently from a MuJoCo
-# position servo, so the same numbers are not the same controller.
+# collapse under 34 kg in half a second. Those gains assume an implicit
+# actuator, which applies the PD law differently from a MuJoCo position
+# servo, so the same numbers are not the same controller.
 #
 # Scaled up until the legs actually support static weight. Verify with
 # scripts/inspect_model.py after any change -- it prints the settle trace.
@@ -111,7 +111,7 @@ def build_spec(urdf_path: str, mesh_dir: str, add_floor: bool = True,
             j.armature = ARMATURE
 
     # Position-servo actuators: the policy commands joint targets, the PD
-    # controller produces torque. Same action space as the Isaac Lab setup.
+    # controller produces torque.
     for j in spec.joints:
         if j.type == mujoco.mjtJoint.mjJNT_FREE:
             continue

@@ -81,8 +81,8 @@ reports the patch as live.
 
 Tuned here, not copied. `unitree_rl_gym`'s published values (hip 100, knee 150,
 ankle 40) do not hold this robot up in MuJoCo — the legs collapse under 34 kg in
-half a second. Those gains assume Isaac Lab's implicit actuator, which applies
-the PD law differently from a MuJoCo position servo.
+half a second. Those gains assume an implicit actuator, which applies the PD law
+differently from a MuJoCo position servo.
 
 Rotor inertia (`armature = 0.01`) matters more than the gains did. Ours was 0,
 which makes effective joint inertia tiny and any stiff PD controller numerically
