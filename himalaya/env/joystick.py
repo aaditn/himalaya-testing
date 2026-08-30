@@ -37,12 +37,44 @@ from himalaya.env import gait
 from mujoco_playground._src import mjx_env
 from himalaya.env import base as g1_base
 from himalaya.env import g1_constants as consts
+from himalaya.env import scene as scene_mod
 
 
 def default_config() -> config_dict.ConfigDict:
   return config_dict.create(
       ctrl_dt=0.02,
-      sim_dt=0.002,
+      # MEASURED: physics is ~100% of env.step. Ten substeps at 3.69 ms
+      # against a 30.86 ms step -- obs, rewards and termination together are
+      # under 10%, so the substep count is the only real throughput lever.
+      # (Collision culling is already maximal: 1 of 72 geoms collides, the
+      # rest go through 7 explicit <pair> elements, so broadphase does
+      # nothing. Shrinking naconmax 8x buys 1.01x. Neither is worth touching.)
+      #
+      # 0.005 with implicitfast, benchmarked at 4096 envs against a
+      # dt=0.002 i3/5 Euler reference:
+      #
+      #   dt.002 i3/5 Euler        30.88 ms  1.00x  deviation  --
+      #   dt.004 i2/4 Euler        15.97 ms  1.93x  deviation 0.0408 m
+      #   dt.004 i3/5 implicitfast 16.95 ms  1.82x  deviation 0.0181 m
+      #   dt.005 i3/5 implicitfast 14.04 ms  2.20x  deviation 0.0094 m
+      #   dt.008 i3/5 implicitfast 12.69 ms  2.43x  deviation 0.3841 m
+      #
+      # "deviation" is max divergence of the pelvis trajectory over a 50-step
+      # zero-action collapse. 0.008 is BROKEN -- it sinks -0.74 m where the
+      # reference sinks -1.00 and ends at tilt 0.446 vs 0.10, so its longer
+      # survival is the physics failing to resolve the fall, not a better
+      # integrator. Do not be tempted by it.
+      #
+      # implicitfast is what makes this safe. The kp=3000 arm gains are
+      # exactly what large explicit timesteps destabilise: Euler at 0.004
+      # nearly doubles peak joint velocity (67.7 -> 124.5 rad/s, the arms
+      # ringing), while implicitfast at 0.005 holds it to 83.8. So the
+      # implicit integrator is both faster AND closer to the reference --
+      # not a fidelity-for-speed trade.
+      #
+      # If a run stalls where a previous one learned, put this back to 0.002
+      # with Euler before blaming the reward.
+      sim_dt=0.005,
       episode_length=1000,
       action_repeat=1,
       action_scale=0.5,
@@ -62,6 +94,10 @@ def default_config() -> config_dict.ConfigDict:
       reward_config=config_dict.create(
           scales=config_dict.create(
               # Tracking related rewards.
+              # MODIFIED: the climbing objective. Deliberately posture-blind --
+              # it says "go up" and nothing about how. Zero on flat ground, so
+              # every existing task is unchanged.
+              progress_uphill=0.0,
               tracking_lin_vel=1.0,
               tracking_ang_vel=0.75,
               # Base related rewards.
@@ -92,6 +128,21 @@ def default_config() -> config_dict.ConfigDict:
               dof_pos_limits=-1.0,
               pose=-0.1,
           ),
+          # Target climb rate for progress_uphill, in metres of HEIGHT per
+          # second. On a 35 degree slope 0.30 m/s of height is about 0.52 m/s
+          # along the ground -- a brisk but reachable climb. The old 0.8 was
+          # inherited from when this measured ground speed; as a height cap it
+          # would need 1.4 m/s along the ground, so it never bound and the
+          # reward had no ceiling.
+          max_uphill_speed=0.30,
+          # Per-step cost of sitting on the starting platform, in the same
+          # units as progress_uphill (metres of height per second). Set well
+          # below max_uphill_speed so climbing always beats waiting, without
+          # the penalty dwarfing the reward: at 0.5 against a 0.30 ceiling,
+          # loitering cost -4.0 while the best climb earned +2.3, which
+          # punishes the robot for existing on the platform harder than it can
+          # ever be paid for climbing.
+          platform_loiter=0.08,
           tracking_sigma=0.25,
           max_foot_height=0.15,
           base_height_target=0.5,
@@ -111,6 +162,12 @@ def default_config() -> config_dict.ConfigDict:
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
+      # Floor tilt in degrees, applied to the floor geom at load time (see
+      # base.py). 0.0 leaves every existing scene exactly as it was.
+      slope_deg=0.0,
+      # Half-width of the spawn xy jitter, metres. Wide on the climbing task
+      # so the policy cannot memorise one patch of rock.
+      spawn_jitter=0.5,
       impl="warp",
       naconmax=8 * 8192,
       njmax=29 * 2 + 8 * 4,
@@ -261,26 +318,115 @@ class Joystick(g1_base.G1Env):
     self._right_hand_right_thigh_found_sensor = self._mj_model.sensor(
         "right_hand_right_thigh_found"
     ).id
+    # MODIFIED: hand-floor contact. These sensors have existed in sensor.xml
+    # since hands were given contact pairs, and NOTHING read them -- the policy
+    # could not feel its own palms, so it could not learn to brace with them.
+    self._hands_floor_found_sensor = [
+        self._mj_model.sensor(side + "_hand_floor_found").id
+        for side in ["left", "right"]
+    ]
 
   def reset(self, rng: jax.Array) -> mjx_env.State:
     qpos = self._init_q
     qvel = jp.zeros(self.mjx_model.nv)
 
-    # x=+U(-0.5, 0.5), y=+U(-0.5, 0.5), yaw=U(-3.14, 3.14).
+    # x=+U(-s, s), y=+U(-s, s), yaw=U(-3.14, 3.14).
+    #
+    # MODIFIED: spawn_jitter is configurable and much wider on the climbing
+    # task. At +/-0.5 m the robot always started within 8% of a 12 m patch, so
+    # it saw the same handful of bumps every episode and could learn those
+    # rather than how to climb. Wide spawning forces it to handle whatever
+    # rock it lands on.
     rng, key = jax.random.split(rng)
-    dxy = jax.random.uniform(key, (2,), minval=-0.5, maxval=0.5)
+    jitter = self._config.spawn_jitter
+    dxy = jax.random.uniform(key, (2,), minval=-jitter, maxval=jitter)
     qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
+
+    # MODIFIED: on the climbing task, start ON the flat platform rather than
+    # scattered over the slope. Spawning mid-slope meant the robot was already
+    # sliding before its first action, so it never had a stable state to act
+    # from. x is placed across the platform's width; y keeps the jitter above,
+    # so it still sees different rock each episode and cannot memorise one
+    # line up the hill.
+    # Start ON the slope, in one of the lanes, chosen at random. There is no
+    # platform to retreat to: a flat unrewarded start became a safe harbour
+    # the policy never left. Spawning part-way up means it begins already
+    # committed to the climb, and the route it gets changes every episode.
+    #
+    # ADD the jitter, do not DISCARD it. This line used to be .set(SPAWN),
+    # which overwrote the dxy sampled 15 lines above and pinned all 8192 envs
+    # to one coordinate: measured spawn x/y/z std of EXACTLY 0.0000, with only
+    # yaw varying. Two runs (H warm, J cold, 107M and 125M steps) then died the
+    # same way -- 80% on the clearance check, median step 40 -- because that
+    # one fixed point sits on the flank of a wall facing a 32 degree rise, and
+    # no policy can learn a corridor it never stands in. The 16-variant terrain
+    # bank is wasted if every episode starts at the same coordinate on it.
+    if self._lane is not None:
+      qpos = qpos.at[0:2].set(jp.array(scene_mod.SPAWN) + dxy)
+
     rng, key = jax.random.split(rng)
-    yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
-    quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
-    new_quat = math.quat_mul(qpos[3:7], quat)
-    qpos = qpos.at[3:7].set(new_quat)
+    # Spawn placement -- position, heading, body tilt, height -- comes from
+    # scene.spawn_pose(). THE single definition, shared with scripts/view.py.
+    #
+    # Do not reimplement any part of it here. This block previously carried its
+    # own copy of the yaw, the tilt, and three height corrections, while the
+    # viewer carried a different subset; the two disagreed silently and the
+    # viewer showed a robot facing a different way than training used.
+    #
+    # slope_rad is a compile-time constant, so the numpy call below is traced
+    # once and folded into the graph rather than run per step.
+    if self._slope_rad != 0.0:
+      rng, key = jax.random.split(rng)
+      jitter = jax.random.uniform(
+          key, (), minval=-scene_mod.SPAWN_YAW_JITTER,
+          maxval=scene_mod.SPAWN_YAW_JITTER)
+      # The jitter is the only stochastic part, so build the pose at zero
+      # jitter and rotate by the sampled angle afterwards.
+      # terrain_height=None: the heightfield lookup stays in jax below, since
+      # under jit it returns a tracer that numpy cannot consume.
+      # Read the keyframe from the MODEL, not from self._init_q: the latter is
+      # a jax array and becomes a tracer under jit, which numpy cannot consume.
+      kf = np.array(self._mj_model.keyframe("knees_bent").qpos)
+      base = scene_mod.spawn_pose(
+          kf, self._slope_rad, float(kf[2]), terrain_height=None)
+      qpos = qpos.at[0:7].set(jp.array(base[0:7]))
+      # Re-apply the xy jitter: spawn_pose() returns the pose at the FIXED
+      # scene.SPAWN, and the .set() above covers indices 0:7 -- position and
+      # orientation both -- so it silently discards the dxy sampled earlier.
+      # That is what pinned every env to one coordinate (measured std exactly
+      # 0.0000 in x, y and z, only yaw varying). It has to land BEFORE the
+      # relief probe below, or the terrain height is read at the wrong place
+      # and the robot spawns buried or floating.
+      qpos = qpos.at[0:2].add(dxy)
+      # Same probe grid and max-reduction as scene.spawn_lift_relief, in jax.
+      n = jp.array(self._slope_normal)
+      offs = jp.array(scene_mod.probe_offsets())
+      relief = jp.max(jax.vmap(
+          lambda o: self.terrain_height_at(qpos[0:3] + o))(offs))
+      qpos = qpos.at[0:3].add(relief * n)
+      qpos = qpos.at[2].add(scene_mod.SPAWN_CLEARANCE)
+      spin = math.axis_angle_to_quat(jp.array([0.0, 0.0, 1.0]),
+                                     jp.array([jitter]))
+      qpos = qpos.at[3:7].set(math.quat_mul(spin, qpos[3:7]))
+    else:
+      rng, key = jax.random.split(rng)
+      yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
+      quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
+      qpos = qpos.at[3:7].set(math.quat_mul(qpos[3:7], quat))
 
     # qpos[7:]=*U(0.5, 1.5)
-    rng, key = jax.random.split(rng)
-    qpos = qpos.at[7:].set(
-        qpos[7:] * jax.random.uniform(key, (29,), minval=0.5, maxval=1.5)
-    )
+    #
+    # Inherited from flat-ground walking, where a crumpled start is harmless
+    # jitter. Note it is MULTIPLICATIVE: it cannot move a joint that sits at
+    # zero, and it swings the large-angle joints hardest (the knee at 0.669 rad
+    # spans 0.33-1.00). step() then commands _default_pose, so the robot spawns
+    # in one configuration and is immediately told to snap to another.
+    # _reset_jitter_off exists so spawn_check.py can isolate that effect.
+    if not getattr(self, "_reset_jitter_off", False):
+      rng, key = jax.random.split(rng)
+      qpos = qpos.at[7:].set(
+          qpos[7:] * jax.random.uniform(key, (29,), minval=0.5, maxval=1.5)
+      )
 
     # d(xyzrpy)=U(-0.5, 0.5)
     rng, key = jax.random.split(rng)
@@ -441,15 +587,99 @@ class Joystick(g1_base.G1Env):
   # solver lets a prone 33 kg body sink partway through the floor. The policy
   # then learns a stable fallen pose instead of walking, which makes every
   # episode-length and reward number from such a run meaningless.
+  # Height of the foot SITE above the sole when the foot is planted, metres.
+  # gait.get_rz returns height above ground (0 at stance), so this offset has to
+  # come off the measured site height or the gait clock is compared against a
+  # target it can never reach. Measured on the knees_bent keyframe, flat ground:
+  # both foot sites sit at world z = 0.0333.
+  FOOT_SITE_OFFSET = 0.0333
+
+  # Body-frame heightmap sample points, metres. 5x5 over +/-0.75 m: wide enough
+  # to see both corridor walls at the 0.47-0.84 m floor widths the terrain bank
+  # produces, fine enough that a 0.3 m step shows up in one cell.
+  # Shoulder geometry, measured on the knees_bent keyframe.
+  SHOULDER_ABOVE_PELVIS = 0.291
+  # Lateral distances the wall sensor probes, metres. A palm reaches 0.56 m
+  # (0.10 m shoulder offset + 0.46 m arm), so this brackets that with a little
+  # either side: a wall closer than 0.3 m is one the robot is already against.
+  WALL_PROBE_DIST = [0.30, 0.42, 0.54, 0.66, 0.80]
+  # Furthest a palm can reach laterally: 0.10 m shoulder offset + 0.46 m arm.
+  HAND_REACH = 0.56
+
+  HEIGHTMAP_OFFSETS = [
+      [x, y]
+      for x in (-0.75, -0.375, 0.0, 0.375, 0.75)
+      for y in (-0.75, -0.375, 0.0, 0.375, 0.75)
+  ]
+
   MAX_TILT = 0.5           # gravity-z; 1.0 = upright, 0.0 = horizontal (~60 deg)
   MIN_TORSO_HEIGHT = 0.4   # metres; nominal standing pelvis is ~0.78
 
+  # Slope-relative fall limits, used when slope_deg != 0.
+  #
+  # A climber on all fours is legitimately pitched 40-70 degrees off the
+  # surface normal (cos(70) = 0.34), so TILT_TOL has to sit well below the
+  # bipedal MAX_TILT or correct behaviour terminates. With the tilt check that
+  # permissive, the clearance check is what actually catches a fall.
+  # MODIFIED 0.0 -> 0.5. The 0.0 was set for a crawler, which is legitimately
+  # pitched 40-70 degrees off the surface normal; for an upright walker it
+  # permits lying face-down on the rock and calling the episode alive. 0.5
+  # matches the bipedal MAX_TILT, measured against the surface instead of the
+  # world.
+  TILT_TOL = 0.5            # dot(torso_up, slope_normal); 1.0 = normal to slope
+  # Pelvis height above its own lowest foot, along the surface normal. Healthy
+  # standing measures 0.73-0.77 m; the bipedal MIN_TORSO_HEIGHT of 0.4 is the
+  # same fraction of a 0.78 m nominal, so 0.40 keeps the two tasks consistent.
+  # The old 0.25 was sized for a different quantity (height above the mean
+  # plane) and against this one would let the pelvis fall to a third of
+  # standing height before the episode ended.
+  MIN_SLOPE_CLEARANCE = 0.40
+
   def _get_termination(self, data: mjx.Data) -> jax.Array:
-    # MODIFIED: was `< 0.0`. Fire at ~60 degrees rather than waiting for 90,
-    # and treat a pelvis on the ground as down whatever the orientation --
-    # the case the stock height-free check misses entirely.
-    fall_termination = self.get_gravity(data, "torso")[-1] < self.MAX_TILT
-    fall_termination |= data.qpos[2] < self.MIN_TORSO_HEIGHT
+    if self._slope_rad != 0.0:
+      # MODIFIED: on a slope both stock checks measure against world vertical,
+      # which condemns the target behaviour. A robot aligned to a 45 degree
+      # slope reads gravity_z = 0.707 and its pelvis height is meaningless
+      # once the ground rises with distance. Measure both against the surface.
+      n = jp.array(self._slope_normal)
+      fall_termination = jp.dot(self.get_gravity(data, "torso"), n) < self.TILT_TOL
+      # MODIFIED: "am I standing" measured as pelvis height above MY OWN
+      # LOWEST FOOT, along the slope normal. No terrain lookup at all.
+      #
+      # Two earlier versions of this check were wrong, both for the same
+      # reason -- they measured against the world instead of against the robot:
+      #
+      #   dot(qpos, n) alone is height above the plane the terrain is built on,
+      #   which on a heightfield with a metre of relief says nothing about
+      #   posture: upright in a trough reads LOWER than lying flat on a peak.
+      #
+      #   Subtracting terrain_height_at looks like the fix but is not. That
+      #   function bilinearly interpolates the heightfield, and on 48 degree
+      #   faces the interpolated surface under the pelvis can sit well above
+      #   the rock the feet are actually on. Measured: a robot with tilt 0.970
+      #   -- upright to within 14 degrees of perpendicular -- read clearance
+      #   0.162 against a 0.25 threshold and was terminated as fallen.
+      #
+      # Pelvis-above-lowest-foot is the quantity the check was always reaching
+      # for. It is invariant to terrain entirely, so no interpolation can fool
+      # it. Measured on healthy spawns: 0.73-0.77 m.
+      foot_pos = data.site_xpos[self._feet_site_id]
+      lowest_foot = jp.min(foot_pos @ n)
+      clearance = jp.dot(data.qpos[0:3], n) - lowest_foot
+      fall_termination |= clearance < self.MIN_SLOPE_CLEARANCE
+    else:
+      # MODIFIED: was `< 0.0`. Fire at ~60 degrees rather than waiting for 90,
+      # and treat a pelvis on the ground as down whatever the orientation --
+      # the case the stock height-free check misses entirely.
+      fall_termination = self.get_gravity(data, "torso")[-1] < self.MAX_TILT
+      fall_termination |= data.qpos[2] < self.MIN_TORSO_HEIGHT
+    # MODIFIED: foot-to-foot contact ends the episode again, on slopes too.
+    #
+    # It was disabled because it fired within ~6 steps in 60 of 60 CRAWLING
+    # episodes, where a narrow stance is correct. The task is now an upright
+    # walk, and for a walker the feet touching means the legs have crossed,
+    # which is a genuine fall. The shin checks were never disabled: a foot
+    # against the opposite shin is a tangle at any slope.
     contact_termination = data.sensordata[
         self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
     ] > 0
@@ -518,6 +748,86 @@ class Joystick(g1_base.G1Env):
         * self._config.noise_config.scales.linvel
     )
 
+    # Route heading rotated into the body frame. yaw_inv turns a world xy
+    # vector into the pelvis's own left/forward axes.
+    route_world = self.route_dir_at(data.qpos[0:3])
+    fwd = math.rotate(jp.array([1.0, 0.0, 0.0]), data.qpos[3:7])[:2]
+    fwd = fwd / (jp.linalg.norm(fwd) + 1e-6)
+    left = jp.array([-fwd[1], fwd[0]])
+    route_local = jp.array([jp.dot(route_world, fwd),
+                            jp.dot(route_world, left)])
+
+    # Terrain around the robot, in its OWN frame: a 5x5 grid over ~1.5 m,
+    # rotated by the pelvis yaw, reported as height RELATIVE to the pelvis.
+    #
+    # Without this the policy has no idea a wall exists. It was being asked to
+    # brace against geometry it could not perceive. Relative to the pelvis, not
+    # absolute relief, because what matters is what is above and below the
+    # robot -- not where the terrain's mean plane happens to sit.
+    #
+    # Measured cost: 0.035 ms whether the grid is 9 points or 36, because it is
+    # one fused gather. There is no reason to be stingy.
+    n_up = jp.array(self._slope_normal)
+    grid = jp.array(self.HEIGHTMAP_OFFSETS)          # (25, 2) body-frame x,y
+    rot = jp.array([[fwd[0], -fwd[1]], [fwd[1], fwd[0]]])
+    world_xy = (rot @ grid.T).T + data.qpos[0:2]
+    pel_h = jp.dot(data.qpos[0:3], n_up)
+    def _h(xy):
+      p3 = jp.array([xy[0], xy[1], data.qpos[2]])
+      # terrain_height_at gives relief above the mean plane along the normal;
+      # pel_h is the pelvis measured the same way. The difference is how far
+      # the ground sits below the robot: negative underfoot, positive where a
+      # wall rises past it.
+      return self.terrain_height_at(p3, self.mjx_model.hfield_data) - pel_h
+    heightmap = jp.clip(jax.vmap(_h)(world_xy), -1.5, 1.5)
+
+    # WALL SENSOR: what a hand would find, on each side.
+    #
+    # The heightmap above tells the robot where the FLOOR is. It samples at
+    # +/-0.375 and +/-0.75 m laterally, and a braced palm sits at ~0.5 m --
+    # right between two samples -- so the wall a hand would actually touch was
+    # never observed. It also reports one height per column, so there is no
+    # sense of a wall FACE at shoulder level, only ground underfoot.
+    #
+    # This probes the band a palm can reach (shoulder is 0.10 m lateral, the
+    # arm reaches 0.46 m, so 0.56 m out) at several distances and reports, per
+    # side: how far away the first bracing surface is, and how high it stands
+    # relative to the shoulder. That is the information the hands need and the
+    # heightmap cannot carry.
+    sh_h = pel_h + self.SHOULDER_ABOVE_PELVIS
+    def _wall(side_sign):
+      lat = left * side_sign
+      def probe(dist):
+        xy = data.qpos[0:2] + lat * dist
+        p3 = jp.array([xy[0], xy[1], data.qpos[2]])
+        return self.terrain_height_at(p3, self.mjx_model.hfield_data)
+      hs = jax.vmap(probe)(jp.array(self.WALL_PROBE_DIST))
+      # Report the HIGHEST surface in reach, not the first one found.
+      #
+      # Taking the first hit returned the wall's base -- measured, every side
+      # read -0.41 to -0.51 m, which is the ground rising, not a face a palm
+      # can press on. The tallest point in the reachable band is what the hand
+      # actually meets.
+      reachable = jp.array(self.WALL_PROBE_DIST) <= self.HAND_REACH
+      cand = jp.where(reachable, hs, -1e3)
+      idx = jp.argmax(cand)
+      top = cand[idx]
+      # Anything within a downward arm-span of the shoulder is reachable: the
+      # arm can press down-and-out, not only straight sideways. 0.35 m was too
+      # strict and reported "no wall" everywhere, because these corridors are
+      # V-shaped -- at hand reach the surface sits 0.25-0.67 m below the
+      # shoulder and only rises past it further out than the arm can go.
+      found = top > sh_h - 0.70
+      dist = jp.where(found, jp.array(self.WALL_PROBE_DIST)[idx], 1.0)
+      rel_h = jp.where(found, top - sh_h, -1.0)
+      return jp.array([dist, rel_h, found.astype(jp.float32)])
+    wall_sense = jp.concatenate([_wall(1.0), _wall(-1.0)])  # left, right
+
+    hand_contact = jp.array([
+        data.sensordata[self._mj_model.sensor_adr[sid]] > 0
+        for sid in self._hands_floor_found_sensor
+    ], dtype=jp.float32)
+
     state = jp.hstack([
         noisy_linvel,  # 3
         noisy_gyro,  # 3
@@ -527,6 +837,22 @@ class Joystick(g1_base.G1Env):
         noisy_joint_vel,  # 29
         info["last_act"],  # 29
         phase,
+        # MODIFIED: which way the corridor runs, in the BODY frame. 2 dims.
+        #
+        # progress_uphill pays for velocity along the route, but nothing in the
+        # observation said where the route went -- the policy was being paid to
+        # move in a direction it could not perceive, so it could only find the
+        # corridor by trial and error against a reward it could not attribute.
+        # Measured over four runs, that produced rising reward curves with net
+        # height of -0.31, -0.43, -0.25 and +0.01 m.
+        #
+        # Body frame, not world: a real robot knows where a wall is relative to
+        # itself, not its global heading. Zero on flat ground and on any scene
+        # without routes, so nothing else changes.
+        route_local,  # 2
+        heightmap,  # 25
+        wall_sense,  # 6: per side, distance / height vs shoulder / found
+        hand_contact,  # 2
     ])
 
     accelerometer = self.get_accelerometer(data, "pelvis")
@@ -567,6 +893,10 @@ class Joystick(g1_base.G1Env):
   ) -> dict[str, jax.Array]:
     del metrics  # Unused.
     return {
+        # The climbing objective.
+        "progress_uphill": self._reward_progress_uphill(
+            self.get_global_linvel(data, "torso"), data.qpos[0:3]
+        ),
         # Tracking rewards.
         "tracking_lin_vel": self._reward_tracking_lin_vel(
             info["command"], self.get_local_linvel(data, "pelvis")
@@ -682,6 +1012,93 @@ class Joystick(g1_base.G1Env):
     out_of_limits += jp.clip(qpos - self._soft_uppers, 0.0, None)
     return jp.sum(out_of_limits)
 
+  def _reward_progress_uphill(self, global_linvel: jax.Array,
+                              data_pos: jax.Array) -> jax.Array:
+    """Speed up the slope, clipped at a target pace.
+
+    Deliberately says nothing about posture, limb count, or gait -- if
+    quadrupedal climbing is the only way to make progress on a steep slope,
+    that is what the policy should discover, not what this term should
+    prescribe. The clip stops it paying unboundedly for a downhill-then-launch
+    exploit and keeps the scale comparable to the tracking terms.
+
+    Zero on flat ground: uphill is undefined there and the scale is 0 anyway.
+    """
+    if self._slope_rad == 0.0:
+      return jp.zeros(())
+
+    # Reward HEIGHT GAINED, not velocity along some chosen direction.
+    #
+    # A projection needs a direction, and both options were wrong. World-uphill
+    # punishes the corridor: the lane wanders 4.4 m laterally at a median 38
+    # degrees off the uphill axis, so following it pays only cos(38) and
+    # charging straight up the wall pays more. The lane tangent fixes that but
+    # scripts the route -- the env looks up where the lane goes and pays for
+    # alignment with it, which hands the policy the answer and needs a
+    # centreline a real robot would not have.
+    #
+    # Height gained has no direction in it at all. Rounding a bend still gains
+    # height; going backwards loses it. The policy is never told where the lane
+    # is -- it has to discover that the corridor is the cheapest way up. And it
+    # is optimising something a real robot could actually measure, since its own
+    # altitude is implied by the gravity vector and proprioception it already
+    # senses.
+    # MODIFIED: speed ALONG THE CORRIDOR, not height gained.
+    #
+    # dot(v, world_up) was the wrong objective for this map. The corridors run
+    # roughly across the fall line -- measured at the spawn, the low ground
+    # bears 90-120 degrees while every other heading meets a 0.4-0.8 m bank --
+    # so the fastest way to gain height is to charge straight at a bank, and
+    # the reward paid MOST for abandoning the route. Two runs drifted downhill
+    # under it while their reward curves rose.
+    #
+    # The route tangent is derived from the heightfield itself (base.py builds
+    # the field; make_route.py traces the lines through the troughs), so it
+    # cannot disagree with the terrain the robot is standing on. It names the
+    # goal without prescribing a gait, the same way tracking_lin_vel names a
+    # target speed.
+    d = self.route_dir_at(data_pos)
+    along = jp.dot(global_linvel[:2], d)
+    up = jp.dot(global_linvel, jp.array(self._slope_normal_up))
+    # GATE the route term on actually gaining height, rather than blending it
+    # with height.
+    #
+    # The blend was 0.8*along + 0.2*up, and the corridor bears ~200 degrees at
+    # the spawn -- mostly lateral. So a robot sliding sideways along the route
+    # collected nearly the full reward while gaining no height, and that is
+    # exactly what Run D did: reward +2.79, episode length 379, net height
+    # -0.25 m. Following the corridor should only pay when the corridor is
+    # taking you UP.
+    #
+    # Below the gate the term falls back to height alone, so descending still
+    # costs and there is no flat region for the policy to sit in.
+    climbing = up > 0.0
+    routed = jp.linalg.norm(d) > 0.5
+    speed = jp.where(routed & climbing, 0.7 * along + 0.3 * up, up)
+    # SYMMETRIC clip. It was [-1.0, +0.30], penalising lost height 3.3x harder
+    # than gained height -- so under an exploring policy the expected value of
+    # moving at all was negative, and the optimal response was to stand still.
+    cap = self._config.reward_config.max_uphill_speed
+    reward = jp.clip(speed, -cap, cap)
+    # The platform is a starting position, not part of the task. Movement
+    # there earns nothing -- otherwise it is just a flat-ground walking
+    # reward to farm instead of climbing.
+    #
+    # But zero is not neutral, it is a SAFE HARBOUR: with termination at -100
+    # and the slope costing reward to slide down, standing still on flat
+    # ground beats attempting the climb. Measured, episode length went 54 ->
+    # 584 steps the moment the platform existed, with reward drifting DOWN --
+    # the policy had found somewhere safe to wait.
+    #
+    # So loitering costs a fixed rate per step. The robot has to leave, and
+    # once on the slope the penalty stops and real climbing reward starts.
+    if self._platform_x is not None:
+      on_platform = data_pos[0] > self._platform_x
+      reward = jp.where(
+          on_platform, -self._config.reward_config.platform_loiter, reward
+      )
+    return reward
+
   def _reward_tracking_lin_vel(
       self,
       commands: jax.Array,
@@ -713,7 +1130,22 @@ class Joystick(g1_base.G1Env):
     return jp.sum(jp.square(global_angvel_torso[:2]))
 
   def _cost_orientation(self, torso_zaxis: jax.Array) -> jax.Array:
-    return jp.sum(jp.square(torso_zaxis - jp.array([0.073, 0.0, 1.0])))
+    # MODIFIED: on a slope, "upright" means perpendicular to the HILL, not to
+    # the world. The stock target is world-vertical, so a robot leaning into a
+    # 35 degree slope -- which is what staying over its feet requires -- pays
+    # this cost continuously.
+    #
+    # Kept, not zeroed. This term is the difference between walking up the hill
+    # and crawling up it, and the whole point of the task is that the robot
+    # walks. The scale drops -2.0 -> -1.0 in climb_config because a climber
+    # legitimately leans more than a walker does.
+    if self._slope_rad == 0.0:
+      return jp.sum(jp.square(torso_zaxis - jp.array([0.073, 0.0, 1.0])))
+    # Same 0.073 forward lean, applied about the slope normal.
+    n = jp.array(self._slope_normal)
+    lean = jp.array([0.073 * jp.cos(self._slope_rad), 0.0,
+                     -0.073 * jp.sin(self._slope_rad)])
+    return jp.sum(jp.square(torso_zaxis - (n + lean)))
 
   def _cost_base_height(self, base_height: jax.Array) -> jax.Array:
     return jp.square(
@@ -809,8 +1241,28 @@ class Joystick(g1_base.G1Env):
       command: jax.Array,
   ) -> jax.Array:
     # Reward for tracking the desired foot height.
+    #
+    # MODIFIED: measure foot height along the SLOPE NORMAL, above the terrain
+    # directly underfoot -- not world z.
+    #
+    # get_rz returns height ABOVE GROUND (0 at stance, swing_height at peak),
+    # but foot_z is the site's world z, which reads FOOT_SITE_OFFSET when the
+    # foot is planted. On flat ground that constant error costs a little
+    # (exp(-0.0333^2/0.01) = 0.80). On a slope it is fatal: two feet one
+    # stride apart differ in world z by 0.5*tan(35 deg) = 0.35 m, and
+    # exp(-0.35^2/0.01) = 4.8e-06. The term is not "fighting" climbing, it is
+    # IDENTICALLY ZERO -- 634 of walk4_rough's 1400 reward points vanish the
+    # moment the floor tilts. It cannot be tuned, only fixed.
     foot_pos = data.site_xpos[self._feet_site_id]
-    foot_z = foot_pos[..., -1]
+    if self._slope_rad == 0.0:
+      foot_z = foot_pos[..., -1] - self.FOOT_SITE_OFFSET
+    else:
+      n = jp.array(self._slope_normal)
+      # Clearance above the rock: distance from the mean plane along the
+      # normal, minus the terrain relief in that column.
+      along = foot_pos @ n
+      relief = jax.vmap(self.terrain_height_at)(foot_pos)
+      foot_z = along - relief - self.FOOT_SITE_OFFSET
     rz = gait.get_rz(phase, swing_height=foot_height)
     error = jp.sum(jp.square(foot_z - rz))
     reward = jp.exp(-error / 0.01)
@@ -839,9 +1291,19 @@ class Joystick(g1_base.G1Env):
         maxval=self._config.ang_vel_yaw[1],
     )
 
+    cmd = jp.hstack([lin_vel_x, lin_vel_y, ang_vel_yaw])
+    # MODIFIED: no zero-command episodes on a slope.
+    #
+    # On flat ground standing still is a valid skill worth 10% of episodes. On a
+    # 35 degree hill a zero command instructs the robot to stand still on a
+    # slope it cannot hold station on (mu >= tan(35) = 0.70 against a randomised
+    # U(0.4, 1.0)), and standing still is the safe-harbour behaviour that
+    # already ended two runs with the policy refusing to move.
+    if self._slope_rad != 0.0:
+      return cmd
     # With 10% chance, set everything to zero.
     return jp.where(
         jax.random.bernoulli(rng4, p=0.1),
         jp.zeros(3),
-        jp.hstack([lin_vel_x, lin_vel_y, ang_vel_yaw]),
+        cmd,
     )

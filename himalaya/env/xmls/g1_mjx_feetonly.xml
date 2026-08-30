@@ -1,7 +1,7 @@
 <mujoco model="g1_29dof_rev_1_0">
   <compiler angle="radian"/>
 
-  <option iterations="3" ls_iterations="5" timestep=".002" integrator="Euler">
+  <option iterations="3" ls_iterations="5" timestep=".005" integrator="implicitfast">
     <flag eulerdamp="disable"/>
   </option>
 
@@ -60,7 +60,18 @@
         <joint axis="0 1 0" range="-1.0472 2.0944" actuatorfrcrange="-25 25" armature="0.003609725"/>
       </default>
       <default class="wrist">
-        <position kp="2"/>
+        <!-- MODIFIED kp 2 -> 40. The hand collision capsule mounts on
+             wrist_yaw_link, three joints below the shoulder, and at kp=2 the
+             wrist was 37x softer than the kp=75 shoulders and elbows: a palm
+             pressed against a wall folded the softest joint in the chain
+             before the shoulder could transmit anything. 40 is still softer
+             than the shoulder, so the arm keeps compliance and absorbs impact
+             rather than levering the robot off the wall.
+
+             NOTE the actuatorfrcrange below is unchanged: wrist_pitch and
+             wrist_yaw cap at +/-5 Nm whatever the gain, so stiffness buys
+             tracking, not peak force. -->
+        <position kp="40"/>
         <joint damping=".2"/>
         <default class="wrist_roll">
           <joint axis="1 0 0" range="-1.97222 1.97222" actuatorfrcrange="-25 25" armature="0.003609725"/>
@@ -137,7 +148,6 @@
       file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_pitch_link.STL"/>
     <mesh name="right_wrist_yaw_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_yaw_link.STL"/>
     <mesh name="right_rubber_hand" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_rubber_hand.STL"/>
-
     <!-- MODIFIED: The supplied CAD hand is cosmetic only.  Its OBJ has two
          material regions, exported as separate meshes because MJCF assigns
          material per geom.  Right-side assets mirror the asymmetric fingers. -->
@@ -305,7 +315,6 @@
             <!-- <geom class="collision" type="capsule" size="0.07" fromto="0 0 0 0 -0.05 0.25" rgba="1 1 1 1"/> -->
             <!-- <geom class="collision" type="capsule" size="0.07" fromto="0 0 0 0 0.05 0.25" rgba="1 1 1 1"/> -->
             <!-- <geom class="collision" type="capsule" size="0.11" fromto="0 0 0.1 0 0 0.38"/> -->
-
             <site name="imu_in_torso" size="0.01" pos="-0.03959 -0.00224 0.14792"/>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778"
               quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
@@ -446,6 +455,19 @@
     <pair name="left_hand_thigh" geom1="left_hand_collision" geom2="left_thigh" condim="1"/>
     <pair name="right_hand_thigh" geom1="right_hand_collision" geom2="right_thigh" condim="1"/>
     <pair name="left_foot_right_foot" geom1="left_foot" geom2="right_foot" condim="1"/>
+    <!-- MODIFIED: hands can now touch the ground. Stock has no hand-floor pair
+         at all, so the palms passed straight through terrain and quadrupedal
+         climbing was physically impossible regardless of the reward.
+
+         condim="3" is required: the class default is condim="1" (frictionless),
+         which would let a planted palm slide freely and be useless for bracing.
+         friction matches the feet -- it is the same rock.
+
+         These are APPENDED deliberately. randomize.py does
+         pair_friction[0:4, 0:2], which indexes pairs positionally, so the two
+         foot-floor pairs must stay at indices 0 and 1. -->
+    <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
     <!-- <pair name="left_foot_right_shin" geom1="left_foot" geom2="right_shin" condim="1"/> -->
     <!-- <pair name="right_foot_left_shin" geom1="right_foot" geom2="left_shin" condim="1"/> -->
     <!-- <pair name="left_shin_right_shin" geom1="left_shin" geom2="right_shin" condim="1"/> -->

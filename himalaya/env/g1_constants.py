@@ -43,6 +43,31 @@ FEET_ONLY_FLAT_TERRAIN_XML = (
 FEET_ONLY_ROUGH_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
 )
+# Same rough heightfield, but the floor geom carries a quat that gets overwritten
+# at load time from --slope-deg. Rough rather than a smooth plane on purpose: on a
+# smooth slope four limbs buy nothing (friction is mu*W*cos(a) however many
+# contacts share it, so the requirement stays mu >= tan(a) for two limbs or four).
+# Hands only help where there is something to brace against, and the hfield's 5 cm
+# bumps are that.
+FEET_ONLY_SLOPE_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_slope_terrain.xml"
+)
+# Tilted INFINITE plane. The hfield version above is a finite 20x20 m slab with
+# 1 m of solid base, so rotating it about the origin swings that slab through
+# the spawn point and the robot lands on its edge rather than its sloped face.
+# A plane has no edge, so the geometry is unambiguous -- at the cost of being
+# smooth, where hands cannot help.
+FEET_ONLY_RAMP_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_ramp_terrain.xml"
+)
+# Mountainside: fractal rock terraced into ledges, 1.2 m of relief over a 12 m
+# patch. Built for climbing rather than walking -- the stock rough hfield's
+# 5 cm bumps are smaller than the hand capsule, so a palm can press on them but
+# never hook one.
+FEET_ONLY_MOUNTAIN_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_mountain_terrain.xml"
+)
+# Contributor's configurable slope track, built by scripts/track_designer.py.
 CUSTOM_TRACK_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_track_terrain.xml"
 )
@@ -52,6 +77,9 @@ def task_to_xml(task_name: str) -> epath.Path:
   return {
       "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
+      "slope_terrain": FEET_ONLY_SLOPE_TERRAIN_XML,
+      "ramp_terrain": FEET_ONLY_RAMP_TERRAIN_XML,
+      "mountain_terrain": FEET_ONLY_MOUNTAIN_TERRAIN_XML,
       "custom_track": CUSTOM_TRACK_TERRAIN_XML,
   }[task_name]
 
