@@ -315,6 +315,18 @@ class Joystick(g1_base.G1Env):
           key, minval=self._platform_x + 0.4, maxval=self._platform_x + 3.0
       )
       qpos = qpos.at[0].set(px)
+      # Start at the mouth of a RANDOMLY CHOSEN route. Randomising the terrain
+      # rather than the start position is what stops the policy memorising:
+      # the spawn is always a lane mouth, but which lane -- and so the whole
+      # shape of the climb above it -- changes every episode.
+      if self._lane is not None:
+        rng, key = jax.random.split(rng)
+        lanes = jp.array(self._lane)
+        pick = jax.random.randint(key, (), 0, lanes.shape[0])
+        rng, key = jax.random.split(rng)
+        qpos = qpos.at[1].set(
+            lanes[pick] + jax.random.uniform(key, minval=-0.35, maxval=0.35)
+        )
     rng, key = jax.random.split(rng)
     yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
     quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)

@@ -36,7 +36,7 @@ def _smooth_path(res, rng, wiggle=2.2, octaves=3):
 
 
 def route(res=256, extent=12.0, lane_w=1.1, wall_h=0.55, wall_w=0.9,
-          rough=0.10, lane_rough=0.055, seed=0):
+          rough=0.10, lane_rough=0.055, n_routes=4, seed=0):
   """Return (heights_in_metres, stats).
 
   lane_w   walkable width, metres
@@ -49,10 +49,25 @@ def route(res=256, extent=12.0, lane_w=1.1, wall_h=0.55, wall_w=0.9,
   rng = np.random.default_rng(seed)
   cell = extent / res
 
-  # Uphill runs along axis 0 (world -x); lateral is axis 1.
-  centre = _smooth_path(res, rng)
+  # SEVERAL corridors side by side in one heightfield, rather than one.
+  #
+  # hfield_data is a single array shared by every environment -- it has no
+  # per-world dimension in the MJX schema, so 8192 envs cannot each get their
+  # own terrain the way they get their own friction. Building N routes into
+  # one field and spawning at a random one gets the same effect: the policy
+  # meets a different corridor each episode and cannot memorise a path,
+  # because a policy that learned one route fails on the next.
   lat = np.arange(res)[None, :]
-  dist = np.abs(lat - centre[:, None]) * cell      # metres from lane centre
+  band = res / n_routes
+  centres, dists = [], []
+  for r in range(n_routes):
+    # Each route wanders within its own band, with its own everything.
+    c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + band * (r + 0.5)
+    centres.append(c)
+    dists.append(np.abs(lat - c[:, None]) * cell)
+  # A point belongs to whichever route it is nearest.
+  dist = np.min(np.stack(dists), axis=0)
+  centre = centres[0]
 
   # Everything below varies ALONG the climb. A constant-width lane between two
   # equal walls reads as built rather than found, so width, each wall's height
@@ -134,17 +149,21 @@ def write_png(path, z_scale, **kw):
   Image.fromarray((np.clip(h / z_scale, 0, 1) * 255).astype(np.uint8),
                   mode="L").save(path)
 
+  # Save every route's mouth, so reset() can start at a random one. Only the
+  # entry point is needed -- the reward is height gained, which says nothing
+  # about where the lane goes, so the policy still has to find the corridor
+  # for itself rather than being steered along it.
   res = kw.get("res", 256)
   extent = kw.get("extent", 12.0)
+  n_routes = kw.get("n_routes", 4)
   rng = np.random.default_rng(kw.get("seed", 0))
-  centre_cols = _smooth_path(res, rng)
   cell = extent / res
-  # World coords: axis 0 of the grid is the uphill axis (world -x), axis 1 is
-  # lateral (world y). Store as (uphill_position, lateral_offset) in metres.
-  up = (np.arange(res) - res / 2.0) * cell
-  latm = (centre_cols - res / 2.0) * cell
-  np.save(str(path).replace(".png", "_centre.npy"),
-          np.stack([up, latm], axis=1))
+  band = res / n_routes
+  mouths = []
+  for r in range(n_routes):
+    c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + band * (r + 0.5)
+    mouths.append((c[0] - res / 2.0) * cell)   # lateral offset at the bottom
+  np.save(str(path).replace(".png", "_centre.npy"), np.array(mouths))
   return h, stats
 
 
