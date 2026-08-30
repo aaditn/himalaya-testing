@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional, Union
 
 from etils import epath
 import jax
+import jax.numpy as jp
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
@@ -149,16 +150,69 @@ class G1Env(mjx_env.MjxEnv):
     # about where the route goes.
     self._slope_normal_up = np.array([0.0, 0.0, 1.0])
 
+    # Heightfield relief, kept as a grid so reset() can look up the height at
+    # the SPAWN POINT instead of assuming the worst case.
+    #
+    # This used to be a single number, hf.max(), added to every spawn. That is
+    # 1.10 m on this terrain while the mean relief is 0.34 m, so the average
+    # episode began 0.76 m in the air and the flattest ones a full 1.10 m up --
+    # about the robot's own standing height, dropped onto a 35 degree slope
+    # before the policy had taken an action. It was written when the terrain had
+    # 2.0 m of relief and the alternative was spawning 1.55 m underground; the
+    # blanket maximum solved that at the cost of turning every reset into a fall.
     self._terrain_peak = 0.0
+    self._hfield_grid = None
     if self._mj_model.nhfield > 0:
       nr = int(self._mj_model.hfield_nrow[0])
       nc = int(self._mj_model.hfield_ncol[0])
       z_top = float(self._mj_model.hfield_size[0][2])
       hf = np.array(self._mj_model.hfield_data[: nr * nc])
       self._terrain_peak = float(hf.max()) * z_top
+      # (nrow, ncol) in metres. MuJoCo stores hfield_data row-major with rows
+      # along local y and columns along local x, spanning [-size_x, +size_x]
+      # and [-size_y, +size_y] about the geom origin.
+      self._hfield_grid = jp.array(hf.reshape(nr, nc) * z_top)
+      self._hfield_half = (
+          float(self._mj_model.hfield_size[0][0]),
+          float(self._mj_model.hfield_size[0][1]),
+      )
+      # Rotation from world into the floor geom's local frame. The geom sits at
+      # the origin and its local z axis IS the slope normal (verified against
+      # _slope_normal), so relief stacks along the normal, not along world z.
+      gid = self._mj_model.geom("floor").id
+      d = mujoco.MjData(self._mj_model)
+      mujoco.mj_forward(self._mj_model, d)
+      self._floor_xmat = jp.array(d.geom_xmat[gid].reshape(3, 3))
 
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._xml_path = xml_path
+
+  def terrain_height_at(self, world_xyz: jax.Array) -> jax.Array:
+    """Relief above the mean plane at a world point, measured along the normal.
+
+    Returns 0 when the scene has no heightfield. Bilinear, so a spawn between
+    grid cells does not snap to a neighbouring rock's height.
+    """
+    if self._hfield_grid is None:
+      return jp.zeros(())
+    local = self._floor_xmat.T @ world_xyz
+    hx, hy = self._hfield_half
+    nr, nc = self._hfield_grid.shape
+    # Map local x,y in [-half, +half] onto fractional grid indices.
+    fx = (local[0] + hx) / (2.0 * hx) * (nc - 1)
+    fy = (local[1] + hy) / (2.0 * hy) * (nr - 1)
+    fx = jp.clip(fx, 0.0, nc - 1.0)
+    fy = jp.clip(fy, 0.0, nr - 1.0)
+    x0 = jp.floor(fx).astype(jp.int32)
+    y0 = jp.floor(fy).astype(jp.int32)
+    x1 = jp.minimum(x0 + 1, nc - 1)
+    y1 = jp.minimum(y0 + 1, nr - 1)
+    tx, ty = fx - x0, fy - y0
+    g = self._hfield_grid
+    top = g[y0, x0] * (1 - tx) + g[y0, x1] * tx
+    bot = g[y1, x0] * (1 - tx) + g[y1, x1] * tx
+    return top * (1 - ty) + bot * ty
+
 
   # Sensor readings.
 

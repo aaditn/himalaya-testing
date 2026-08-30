@@ -368,13 +368,43 @@ class Joystick(g1_base.G1Env):
             qpos = qpos.at[2].add(
                 self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
             )
-        # Clear the terrain's own relief. Spawning against the mean plane puts
-        # the robot inside any rock above it; on the 2.0 m mountain terrain
-        # that was every foot, ~1.55 m under. Starting at the peak costs a
-        # short drop onto the surface, which the policy handles, and is far
-        # cheaper than an episode that begins underground.
+        # Clear the terrain's own relief -- at THIS spawn point, not at the
+        # terrain's global peak. Spawning against the mean plane puts the robot
+        # inside any rock above it, but adding hf.max() everywhere dropped the
+        # average episode from 0.76 m up and the flattest from 1.10 m, roughly
+        # the robot's own height, onto a 35 degree slope before it could act.
+        #
+        # The relief is stacked along the slope normal (the floor geom's local
+        # z axis), so the correction goes along the normal too. Its z component
+        # is what qpos[2] needs; the x component shifts the robot along the
+        # slope by a few centimetres and is left alone.
         if self._platform_x is None:
-            qpos = qpos.at[2].add(self._terrain_peak)
+            n = jp.array(self._slope_normal)
+            # Sample under the PELVIS and under each foot, and lift by the
+            # largest. Sampling at the pelvis alone left 10 of 120 feet buried
+            # by up to 0.13 m, because a foot can stand over a rock taller than
+            # the ground beneath the torso -- and a foot that starts inside the
+            # terrain gets an interpenetration impulse on step one, which is
+            # the same failed-from-reset problem in a smaller form.
+            #
+            # The feet are roughly +/-0.10 m either side of the pelvis in the
+            # slope's lateral direction (local y, which the tilt leaves along
+            # world y) and both sit ~0.75 m down the normal. Probing those two
+            # offsets is enough; exact foot placement varies with the joint
+            # jitter applied above, and the 0.05 m clearance covers the rest.
+            probe = qpos[0:3] - self._init_q[2] * n
+            relief = jp.maximum(
+                self.terrain_height_at(qpos[0:3]),
+                jp.maximum(
+                    self.terrain_height_at(probe + jp.array([0.0, 0.10, 0.0])),
+                    self.terrain_height_at(probe + jp.array([0.0, -0.10, 0.0])),
+                ),
+            )
+            qpos = qpos.at[0:3].add(relief * n)
+            # Small clearance so the feet start just above the rock rather than
+            # exactly on it: bilinear sampling smooths sharp ledges, so the true
+            # surface under a foot can sit slightly above the interpolated value.
+            qpos = qpos.at[2].add(0.05)
 
     # qpos[7:]=*U(0.5, 1.5)
     rng, key = jax.random.split(rng)
