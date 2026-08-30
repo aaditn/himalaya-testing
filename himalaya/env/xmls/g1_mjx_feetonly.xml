@@ -60,7 +60,18 @@
         <joint axis="0 1 0" range="-1.0472 2.0944" actuatorfrcrange="-25 25" armature="0.003609725"/>
       </default>
       <default class="wrist">
-        <position kp="2"/>
+        <!-- MODIFIED kp 2 -> 40. The hand collision capsule mounts on
+             wrist_yaw_link, three joints below the shoulder, and at kp=2 the
+             wrist was 37x softer than the kp=75 shoulders and elbows: a palm
+             pressed against a wall folded the softest joint in the chain
+             before the shoulder could transmit anything. 40 is still softer
+             than the shoulder, so the arm keeps compliance and absorbs impact
+             rather than levering the robot off the wall.
+
+             NOTE the actuatorfrcrange below is unchanged: wrist_pitch and
+             wrist_yaw cap at +/-5 Nm whatever the gain, so stiffness buys
+             tracking, not peak force. -->
+        <position kp="40"/>
         <joint damping=".2"/>
         <default class="wrist_roll">
           <joint axis="1 0 0" range="-1.97222 1.97222" actuatorfrcrange="-25 25" armature="0.003609725"/>

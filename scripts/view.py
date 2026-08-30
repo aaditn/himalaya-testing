@@ -72,10 +72,23 @@ def _terrain_height(model, world_xyz, slope_rad):
     return float(top * (1 - ty) + bot * ty)
 
 
-def build(scene, slope_deg):
+def build(scene, slope_deg, variant=None):
+    """Compile the scene, optionally swapping in a terrain-bank variant.
+
+    Training draws a different bank variant per environment, so the baked
+    mountain.png is NOT what the robot walks on any more -- measured, that map
+    has a 1.12 m corridor floor against the bank's 0.47-0.84 m. Viewing the PNG
+    while training runs the bank is exactly the drift CLAUDE.md warns about.
+    """
     slope = np.deg2rad(slope_deg)
     xml = sc.tilted_xml(SCENES[scene], slope)
     model = mujoco.MjModel.from_xml_string(xml, assets=sc.local_assets())
+    if variant is not None and model.nhfield > 0:
+        bank = np.load(
+            (ROOT / "himalaya" / "env" / "xmls" / "assets"
+             / "terrain_bank.npy").as_posix())
+        n = int(model.hfield_nrow[0]) * int(model.hfield_ncol[0])
+        model.hfield_data[:n] = bank[variant % bank.shape[0]][:n]
     return model, slope
 
 
@@ -123,13 +136,17 @@ def main():
                     help="hide the robot; look at the mountain")
     ap.add_argument("--free", action="store_true",
                     help="do not hold the pose -- let physics take it")
+    ap.add_argument("--variant", type=int, default=None, metavar="N",
+                    help="show terrain-bank variant N instead of the baked "
+                         "mountain.png. Training draws these per environment, "
+                         "so this is what the robot actually walks on.")
     ap.add_argument("--x", type=float, default=None,
                     help="spawn x up-slope; default = the training spawn")
     ap.add_argument("--y", type=float, default=None,
                     help="spawn y; default = the training spawn")
     args = ap.parse_args()
 
-    model, slope = build(args.scene, args.climb)
+    model, slope = build(args.scene, args.climb, args.variant)
     data = mujoco.MjData(model)
 
     key = 0

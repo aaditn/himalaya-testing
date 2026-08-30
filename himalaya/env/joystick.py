@@ -287,6 +287,13 @@ class Joystick(g1_base.G1Env):
     self._right_hand_right_thigh_found_sensor = self._mj_model.sensor(
         "right_hand_right_thigh_found"
     ).id
+    # MODIFIED: hand-floor contact. These sensors have existed in sensor.xml
+    # since hands were given contact pairs, and NOTHING read them -- the policy
+    # could not feel its own palms, so it could not learn to brace with them.
+    self._hands_floor_found_sensor = [
+        self._mj_model.sensor(side + "_hand_floor_found").id
+        for side in ["left", "right"]
+    ]
 
   def reset(self, rng: jax.Array) -> mjx_env.State:
     qpos = self._init_q
@@ -539,6 +546,15 @@ class Joystick(g1_base.G1Env):
   # both foot sites sit at world z = 0.0333.
   FOOT_SITE_OFFSET = 0.0333
 
+  # Body-frame heightmap sample points, metres. 5x5 over +/-0.75 m: wide enough
+  # to see both corridor walls at the 0.47-0.84 m floor widths the terrain bank
+  # produces, fine enough that a 0.3 m step shows up in one cell.
+  HEIGHTMAP_OFFSETS = [
+      [x, y]
+      for x in (-0.75, -0.375, 0.0, 0.375, 0.75)
+      for y in (-0.75, -0.375, 0.0, 0.375, 0.75)
+  ]
+
   MAX_TILT = 0.5           # gravity-z; 1.0 = upright, 0.0 = horizontal (~60 deg)
   MIN_TORSO_HEIGHT = 0.4   # metres; nominal standing pelvis is ~0.78
 
@@ -684,6 +700,35 @@ class Joystick(g1_base.G1Env):
     route_local = jp.array([jp.dot(route_world, fwd),
                             jp.dot(route_world, left)])
 
+    # Terrain around the robot, in its OWN frame: a 5x5 grid over ~1.5 m,
+    # rotated by the pelvis yaw, reported as height RELATIVE to the pelvis.
+    #
+    # Without this the policy has no idea a wall exists. It was being asked to
+    # brace against geometry it could not perceive. Relative to the pelvis, not
+    # absolute relief, because what matters is what is above and below the
+    # robot -- not where the terrain's mean plane happens to sit.
+    #
+    # Measured cost: 0.035 ms whether the grid is 9 points or 36, because it is
+    # one fused gather. There is no reason to be stingy.
+    n_up = jp.array(self._slope_normal)
+    grid = jp.array(self.HEIGHTMAP_OFFSETS)          # (25, 2) body-frame x,y
+    rot = jp.array([[fwd[0], -fwd[1]], [fwd[1], fwd[0]]])
+    world_xy = (rot @ grid.T).T + data.qpos[0:2]
+    pel_h = jp.dot(data.qpos[0:3], n_up)
+    def _h(xy):
+      p3 = jp.array([xy[0], xy[1], data.qpos[2]])
+      # terrain_height_at gives relief above the mean plane along the normal;
+      # pel_h is the pelvis measured the same way. The difference is how far
+      # the ground sits below the robot: negative underfoot, positive where a
+      # wall rises past it.
+      return self.terrain_height_at(p3, self.mjx_model.hfield_data) - pel_h
+    heightmap = jp.clip(jax.vmap(_h)(world_xy), -1.5, 1.5)
+
+    hand_contact = jp.array([
+        data.sensordata[self._mj_model.sensor_adr[sid]] > 0
+        for sid in self._hands_floor_found_sensor
+    ], dtype=jp.float32)
+
     state = jp.hstack([
         noisy_linvel,  # 3
         noisy_gyro,  # 3
@@ -706,6 +751,8 @@ class Joystick(g1_base.G1Env):
         # itself, not its global heading. Zero on flat ground and on any scene
         # without routes, so nothing else changes.
         route_local,  # 2
+        heightmap,  # 25
+        hand_contact,  # 2
     ])
 
     accelerometer = self.get_accelerometer(data, "pelvis")

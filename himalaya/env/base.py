@@ -196,6 +196,7 @@ class G1Env(mjx_env.MjxEnv):
       # along local y and columns along local x, spanning [-size_x, +size_x]
       # and [-size_y, +size_y] about the geom origin.
       self._hfield_grid = jp.array(hf.reshape(nr, nc) * z_top)
+      self._hfield_z_top = z_top
       self._hfield_half = (
           float(self._mj_model.hfield_size[0][0]),
           float(self._mj_model.hfield_size[0][1]),
@@ -225,7 +226,8 @@ class G1Env(mjx_env.MjxEnv):
     return self._route_dir[jp.round(fy).astype(jp.int32),
                            jp.round(fx).astype(jp.int32)]
 
-  def terrain_height_at(self, world_xyz: jax.Array) -> jax.Array:
+  def terrain_height_at(self, world_xyz: jax.Array,
+                        hfield_data: jax.Array = None) -> jax.Array:
     """Relief above the mean plane at a world point, measured along the normal.
 
     Returns 0 when the scene has no heightfield. Bilinear, so a spawn between
@@ -246,7 +248,17 @@ class G1Env(mjx_env.MjxEnv):
     x1 = jp.minimum(x0 + 1, nc - 1)
     y1 = jp.minimum(y0 + 1, nr - 1)
     tx, ty = fx - x0, fy - y0
-    g = self._hfield_grid
+    # Read the LIVE heightfield when one is supplied.
+    #
+    # self._hfield_grid is captured from mj_model at __init__. Under per-env
+    # randomization the physics steps mjx_model.hfield_data, which differs per
+    # environment, while this cached copy never changes -- so the robot felt
+    # one terrain and observed another. Measured: four different terrain
+    # variants all produced an identical heightmap.
+    if hfield_data is not None:
+      g = hfield_data.reshape(self._hfield_grid.shape) * self._hfield_z_top
+    else:
+      g = self._hfield_grid
     top = g[y0, x0] * (1 - tx) + g[y0, x1] * tx
     bot = g[y1, x0] * (1 - tx) + g[y1, x1] * tx
     return top * (1 - ty) + bot * ty

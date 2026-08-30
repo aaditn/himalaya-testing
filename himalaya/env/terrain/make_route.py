@@ -41,6 +41,12 @@ _PEAK_M = 2.20
 CHANNEL_DEPTH = 1.10
 CHANNEL_W = 1.0
 CHANNEL_WALL_W = 0.7
+# How much the channel's width and depth vary ALONG its length, as a fraction
+# either side of the nominal. 0.45 means the floor pinches to ~0.55x and opens
+# to ~1.45x of CHANNEL_W as the robot climbs, so one episode contains both the
+# sections where legs suffice and the ones where they do not.
+CHANNEL_W_VARY = 0.45
+CHANNEL_DEPTH_VARY = 0.30
 
 # Wall profile exponent. ABOVE 1 eases out of the lane and steepens as it goes,
 # which is a bank; BELOW 1 leaves the lane edge with infinite slope, which is a
@@ -274,10 +280,26 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
       # corridors, so they are the centrelines.
       _carved.append(c.copy())
       dist = np.abs(lat - c[:, None]) * cell
-      # Flat floor out to half the lane width, then a smooth ramp back up to
+      # Width and depth VARY ALONG THE CHANNEL, they are not constants.
+      #
+      # A corridor of fixed width lets the policy identify which map it is on
+      # within a few steps and commit to one strategy for the whole episode --
+      # the heightmap becomes decoration. Pinching and opening as the robot
+      # climbs means it has to keep reading the terrain, and it meets both the
+      # wide sections where legs suffice and the narrow ones where a hand on
+      # the wall is the only way through, inside a single episode.
+      #
+      # _wander returns a slow random profile with mean 1.0, the same generator
+      # the lane width uses, so the variation reads as terrain rather than
+      # noise.
+      w_prof = _wander(CHANNEL_W_VARY)[:, None]
+      d_prof = _wander(CHANNEL_DEPTH_VARY, octaves=3)[:, None]
+      half_w = (CHANNEL_W / 2.0) * w_prof
+      depth = CHANNEL_DEPTH * d_prof
+      # Flat floor out to half the local width, then a smooth ramp back up to
       # the untouched surface over CHANNEL_WALL_W.
-      t = np.clip((dist - CHANNEL_W / 2.0) / CHANNEL_WALL_W, 0.0, 1.0)
-      cut = CHANNEL_DEPTH * (1.0 - t * t * (3.0 - 2.0 * t))
+      t = np.clip((dist - half_w) / CHANNEL_WALL_W, 0.0, 1.0)
+      cut = depth * (1.0 - t * t * (3.0 - 2.0 * t))
       h = h - cut
 
   h -= h.min()
