@@ -352,8 +352,17 @@ class Joystick(g1_base.G1Env):
     # platform to retreat to: a flat unrewarded start became a safe harbour
     # the policy never left. Spawning part-way up means it begins already
     # committed to the climb, and the route it gets changes every episode.
+    #
+    # ADD the jitter, do not DISCARD it. This line used to be .set(SPAWN),
+    # which overwrote the dxy sampled 15 lines above and pinned all 8192 envs
+    # to one coordinate: measured spawn x/y/z std of EXACTLY 0.0000, with only
+    # yaw varying. Two runs (H warm, J cold, 107M and 125M steps) then died the
+    # same way -- 80% on the clearance check, median step 40 -- because that
+    # one fixed point sits on the flank of a wall facing a 32 degree rise, and
+    # no policy can learn a corridor it never stands in. The 16-variant terrain
+    # bank is wasted if every episode starts at the same coordinate on it.
     if self._lane is not None:
-      qpos = qpos.at[0:2].set(jp.array(scene_mod.SPAWN))
+      qpos = qpos.at[0:2].set(jp.array(scene_mod.SPAWN) + dxy)
 
     rng, key = jax.random.split(rng)
     # Spawn placement -- position, heading, body tilt, height -- comes from
@@ -381,6 +390,14 @@ class Joystick(g1_base.G1Env):
       base = scene_mod.spawn_pose(
           kf, self._slope_rad, float(kf[2]), terrain_height=None)
       qpos = qpos.at[0:7].set(jp.array(base[0:7]))
+      # Re-apply the xy jitter: spawn_pose() returns the pose at the FIXED
+      # scene.SPAWN, and the .set() above covers indices 0:7 -- position and
+      # orientation both -- so it silently discards the dxy sampled earlier.
+      # That is what pinned every env to one coordinate (measured std exactly
+      # 0.0000 in x, y and z, only yaw varying). It has to land BEFORE the
+      # relief probe below, or the terrain height is read at the wrong place
+      # and the robot spawns buried or floating.
+      qpos = qpos.at[0:2].add(dxy)
       # Same probe grid and max-reduction as scene.spawn_lift_relief, in jax.
       n = jp.array(self._slope_normal)
       offs = jp.array(scene_mod.probe_offsets())
