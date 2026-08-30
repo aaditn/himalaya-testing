@@ -279,6 +279,34 @@ class Joystick(g1_base.G1Env):
     new_quat = math.quat_mul(qpos[3:7], quat)
     qpos = qpos.at[3:7].set(new_quat)
 
+    # MODIFIED: place the robot ON the slope, standing perpendicular to it.
+    #
+    # The keyframe height is a fixed world z, which is only correct on level
+    # ground. The floor is rotated about +Y, so its surface sits at
+    # z = -x*tan(slope), and at 45 degrees the xy jitter above alone spans
+    # 1.0 m of surface height: the robot was being dropped from up to 1.25 m
+    # in the air and landing hard, or spawned underneath the surface. Every
+    # episode began in a failed state, which reads as "the policy cannot
+    # learn" rather than "the spawn is wrong".
+    #
+    # Tilting the body by the same angle matters too: spawned world-vertical
+    # on a 45 degree slope the robot is already 45 degrees off the surface
+    # normal, i.e. mid-fall before it has acted.
+    if self._slope_rad != 0.0:
+        surface_z = -qpos[0] * jp.tan(self._slope_rad)
+        qpos = qpos.at[2].set(qpos[2] + surface_z)
+        tilt = math.axis_angle_to_quat(
+            jp.array([0.0, 1.0, 0.0]), jp.array([self._slope_rad])
+        )
+        qpos = qpos.at[3:7].set(math.quat_mul(tilt, qpos[3:7]))
+        # Rotating the body about the pelvis swings the feet downward, so the
+        # pelvis has to rise by the standing height times (1 - cos(slope)) to
+        # keep the feet on the surface rather than buried in it. Measured
+        # without this: feet sit 0.196 m under a 45 degree slope.
+        qpos = qpos.at[2].add(
+            self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
+        )
+
     # qpos[7:]=*U(0.5, 1.5)
     rng, key = jax.random.split(rng)
     qpos = qpos.at[7:].set(
