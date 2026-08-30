@@ -24,14 +24,13 @@
 # ==============================================================================
 """Swing-foot trajectory shaping for the feet-phase reward."""
 
-from typing import Union
 
 import jax
 import jax.numpy as jp
 
 
 def get_rz(
-    phi: Union[jax.Array, float], swing_height: Union[jax.Array, float] = 0.08
+    phi: jax.Array | float, swing_height: jax.Array | float = 0.08
 ) -> jax.Array:
   """Target foot height at gait phase `phi`, in [-pi, pi].
 

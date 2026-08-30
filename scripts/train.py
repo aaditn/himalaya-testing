@@ -13,7 +13,7 @@ import argparse
 import functools
 import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import jax
@@ -23,7 +23,7 @@ import jax
 # warnings on ordinary ground. When the solver runs out of constraint slots it
 # DROPS contacts, and a dropped foot contact means nothing holds the robot up
 # that step -- the likely source of floor penetration.
-NJMAX = 160
+NJMAX = 256
 NACONMAX = 131072
 
 
@@ -34,29 +34,63 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
+    ap.add_argument("--climb", action="store_true",
+                    help="continuous four-limb ascent task")
+    ap.add_argument("--slope", type=float, default=12.0,
+                    help="climb grade in degrees")
+    ap.add_argument("--roughness", type=float, default=0.060,
+                    help="height-field relief in metres")
+    ap.add_argument("--spike-friction", type=float, default=0.95)
+    ap.add_argument("--no-boulders", action="store_true",
+                    help="move boulders below the terrain for crawl bootstrap")
+    ap.add_argument("--hand-load", type=float, default=0.28,
+                    help="target fraction of limb load carried by hands")
+    ap.add_argument("--speed", type=float, default=0.30,
+                    help="target uphill speed in m/s")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--restore", default=None,
+                    help="Orbax checkpoint or checkpoint directory to resume")
+    ap.add_argument("--num-evals", type=int, default=None)
+    ap.add_argument("--eval-envs", type=int, default=None)
     ap.add_argument("--no-randomization", action="store_true",
                     help="train on fixed physics (the old behaviour). Useful "
                          "only as a control -- see the note by randomize below.")
     args = ap.parse_args()
 
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from himalaya.utils.jax_compat import install_brax_compatibility
+
+    install_brax_compatibility()
+
     from brax.training.agents.ppo import networks as ppo_networks
     from brax.training.agents.ppo import train as ppo
     from mujoco_playground import wrapper
 
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from himalaya.env import Joystick, default_config
     from himalaya.env import randomize as g1_randomize
 
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    task = "rough_terrain" if args.rough else "flat_terrain"
+    task = (
+        "climb_terrain" if args.climb
+        else "rough_terrain" if args.rough
+        else "flat_terrain"
+    )
     cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
+    if args.climb:
+        cfg.impl = "jax"
+        cfg.climb.slope_degrees = args.slope
+        cfg.climb.roughness_m = args.roughness
+        cfg.climb.spike_friction = args.spike_friction
+        cfg.climb.boulders_enabled = not args.no_boulders
+        cfg.climb.target_hand_load_share = args.hand_load
+        cfg.climb.target_uphill_speed = args.speed
 
-    name = args.name or f"g1_{datetime.now():%H%M%S}"
-    out = Path("runs") / name
+    name = args.name or f"g1_{datetime.now(UTC):%H%M%S}"
+    out = (Path("runs") / name).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
     env = Joystick(task=task, config=cfg)
@@ -96,14 +130,25 @@ def main():
         print(f"  {row['step']:>11,}  reward={row['reward']:8.2f}  "
               f"len={row['episode_len']:7.1f}  ({row['elapsed_s']:.0f}s)", flush=True)
 
+    num_minibatches = 32
+    batch_size = 256
+    if args.envs < 512:
+        # MODIFIED: permit CPU/API smoke runs without changing production PPO.
+        divisors = [value for value in range(1, 9) if args.envs % value == 0]
+        num_minibatches = max(divisors)
+        batch_size = (args.envs // num_minibatches) * 4
+    num_evals = args.num_evals or (1 if args.timesteps < 1_000_000 else 15)
+    num_eval_envs = args.eval_envs or min(128, max(8, args.envs // 16))
+
     train = functools.partial(
         ppo.train,
         num_timesteps=args.timesteps,
-        num_evals=15,
+        num_evals=num_evals,
+        num_eval_envs=num_eval_envs,
         episode_length=cfg.episode_length,
         num_envs=args.envs,
-        batch_size=256,
-        num_minibatches=32,
+        batch_size=batch_size,
+        num_minibatches=num_minibatches,
         unroll_length=20,
         num_updates_per_batch=4,
         discounting=0.97,
@@ -134,10 +179,12 @@ def main():
         randomization_fn=randomizer,
         wrap_env_fn=wrapper.wrap_for_brax_training,
         progress_fn=progress,
-        seed=0,
+        seed=args.seed,
+        save_checkpoint_path=str(out / "checkpoints"),
+        restore_checkpoint_path=args.restore,
     )
 
-    make_inference_fn, params, _ = train(environment=env, eval_env=eval_env)
+    _make_inference_fn, params, _ = train(environment=env, eval_env=eval_env)
 
     from brax.io import model as brax_model
     brax_model.save_params(str(out / "policy"), params)

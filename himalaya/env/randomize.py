@@ -33,10 +33,14 @@ TORSO_BODY_ID = 16
 def domain_randomize(model: mjx.Model, rng: jax.Array):
   @jax.vmap
   def rand_dynamics(rng):
-    # Floor / foot friction: =U(0.4, 1.0).
+    # MODIFIED: all explicit floor/boulder pairs precede the three self-contact
+    # pairs. Microspike tangential grip is isotropic and sampled in [0.9, 1.0].
     rng, key = jax.random.split(rng)
-    friction = jax.random.uniform(key, minval=0.4, maxval=1.0)
-    pair_friction = model.pair_friction.at[0:2, 0:2].set(friction)
+    spike_pair_count = model.npair - 3 if model.npair >= 7 else 2
+    friction = jax.random.uniform(key, minval=0.9, maxval=1.0)
+    pair_friction = model.pair_friction.at[0:spike_pair_count, 0:2].set(
+        friction
+    )
 
     # Scale static friction: *U(0.9, 1.1).
     rng, key = jax.random.split(rng)

@@ -1,0 +1,15 @@
+{
+  "stages": [
+    {
+      "name": "smoke-12deg",
+      "slope_degrees": 12,
+      "roughness_m": 0.060,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.30,
+      "target_hand_load_share": 0.20,
+      "num_timesteps": 4096,
+      "num_evals": 1,
+      "terrain_seed": 1
+    }
+  ]
+}

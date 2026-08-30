@@ -18,10 +18,10 @@ import mujoco.viewer
 import numpy as np
 
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--flat", action="store_true", help="flat terrain instead of rough")
+    ap.add_argument("--climb", action="store_true", help="four-limb climb terrain")
     ap.add_argument("--menagerie", action="store_true", help="bare Menagerie model")
     ap.add_argument("--seconds", type=float, default=0.0, help="0 = run until closed")
     args = ap.parse_args()
@@ -35,10 +35,20 @@ def main():
         model = mujoco.MjModel.from_xml_path(g1_29dof.scene_path(mjx=False))
         label = "menagerie unitree_g1 (29-DOF)"
     else:
-        from mujoco_playground import registry
-        name = "G1JoystickFlatTerrain" if args.flat else "G1JoystickRoughTerrain"
-        model = registry.load(name).mj_model
-        label = name
+        if args.climb:
+            from pathlib import Path as _Path
+            sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+            from himalaya.env import Joystick, default_config
+            cfg = default_config()
+            cfg.impl = "jax"
+            env = Joystick(task="climb_terrain", config=cfg)
+            model = env.mj_model
+            label = "himalaya four-limb climb"
+        else:
+            from mujoco_playground import registry
+            name = "G1JoystickFlatTerrain" if args.flat else "G1JoystickRoughTerrain"
+            model = registry.load(name).mj_model
+            label = name
 
     data = mujoco.MjData(model)
     if model.nkey > 0:

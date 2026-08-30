@@ -26,8 +26,6 @@
 
 from etils import epath
 
-from mujoco_playground._src import mjx_env
-
 # MODIFIED: was mjx_env.ROOT_PATH / "locomotion" / "g1", i.e. the copy inside
 # site-packages. Points at our own xmls/ so terrain, sensors, and collision
 # geometry are editable here rather than in the library.
@@ -43,8 +41,8 @@ FEET_ONLY_FLAT_TERRAIN_XML = (
 FEET_ONLY_ROUGH_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
 )
-CUSTOM_TRACK_TERRAIN_XML = (
-    ROOT_PATH / "xmls" / "scene_mjx_track_terrain.xml"
+FOUR_LIMB_CLIMB_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_climb_terrain.xml"
 )
 
 
@@ -52,7 +50,7 @@ def task_to_xml(task_name: str) -> epath.Path:
   return {
       "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
-      "custom_track": CUSTOM_TRACK_TERRAIN_XML,
+      "climb_terrain": FOUR_LIMB_CLIMB_TERRAIN_XML,
   }[task_name]
 
 

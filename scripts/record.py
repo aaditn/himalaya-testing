@@ -7,7 +7,7 @@ Renders offscreen on the GPU -- no display needed -- so it works while
 training is running. Pull the result with scripts/pod/pull.sh.
 """
 import argparse
-import functools
+import os
 import sys
 from pathlib import Path
 
@@ -19,12 +19,18 @@ def main():
     ap.add_argument("policy", help="path to a saved brax params file")
     ap.add_argument("--out", default=None)
     ap.add_argument("--seconds", type=float, default=10.0)
-    ap.add_argument("--friction", type=float, default=0.8,
+    ap.add_argument("--friction", type=float, default=0.95,
                     help="floor friction to render at")
     ap.add_argument("--vx", type=float, default=0.8, help="commanded forward vel")
     ap.add_argument("--vy", type=float, default=0.0)
     ap.add_argument("--wz", type=float, default=0.0, help="commanded yaw rate")
     ap.add_argument("--rough", action="store_true")
+    ap.add_argument("--climb", action="store_true")
+    ap.add_argument("--slope", type=float, default=12.0)
+    ap.add_argument("--roughness", type=float, default=0.060)
+    ap.add_argument("--no-boulders", action="store_true")
+    ap.add_argument("--zero-policy", action="store_true",
+                    help="evaluate only the phase-conditioned residual reference")
     ap.add_argument("--camera", default="side",
                     help="'side'/'front'/'chase' = fixed world-up cameras; "
                          "'track' = Playground's body-mounted camera, which "
@@ -36,23 +42,36 @@ def main():
 
     import jax
     import jax.numpy as jp
+    os.environ.setdefault(
+        "MPLCONFIGDIR", str((Path(".tmp") / "matplotlib").resolve())
+    )
+    import imageio_ffmpeg
     import mediapy
-    import mujoco
-    import numpy as np
+    mediapy.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
     from brax.io import model as brax_model
     from brax.training.acme import running_statistics
     from brax.training.agents.ppo import networks as ppo_networks
+
     from himalaya.env import Joystick, default_config
 
     # Same env as training -- himalaya/env/ is the single definition, so a
     # reward or termination change cannot drift between train and record.
-    NJMAX, NACONMAX = 160, 131072
+    NJMAX, NACONMAX = 256, 131072
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    task = "rough_terrain" if args.rough else "flat_terrain"
+    task = (
+        "climb_terrain" if args.climb
+        else "rough_terrain" if args.rough
+        else "flat_terrain"
+    )
     cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
+    if args.climb:
+        cfg.impl = "jax"
+        cfg.climb.slope_degrees = args.slope
+        cfg.climb.roughness_m = args.roughness
+        cfg.climb.boulders_enabled = not args.no_boulders
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
@@ -78,9 +97,12 @@ def main():
     # Friction must be set on the model that gets STEPPED, before the rollout.
     # Setting it on env.mj_model afterwards only changes what is drawn, so the
     # clip would show a "slippery" floor the physics never used.
-    env._mjx_model = env._mjx_model.tree_replace(
-        {"pair_friction": env._mjx_model.pair_friction.at[0:2, 0:2].set(args.friction)}
-    )
+    floor_pair_count = env.mj_model.npair - 3 if args.climb else 2
+    env._mjx_model = env._mjx_model.tree_replace({
+        "pair_friction": env._mjx_model.pair_friction.at[
+            0:floor_pair_count, 0:2
+        ].set(args.friction)
+    })
 
     reset = jax.jit(env.reset)
     step = jax.jit(env.step)
@@ -90,11 +112,15 @@ def main():
     state.info["command"] = jp.array([args.vx, args.vy, args.wz])
 
     n = int(args.seconds / env.dt)
-    rollout, slips = [], 0
+    rollout, actions, slips = [], [], 0
     rng = jax.random.PRNGKey(1)
     for _ in range(n):
         rng, key = jax.random.split(rng)
-        act, _ = inference(state.obs, key)
+        if args.zero_policy:
+            act = jp.zeros(env.action_size)
+        else:
+            act, _ = inference(state.obs, key)
+        actions.append(act)
         state = step(state, act)
         state.info["command"] = jp.array([args.vx, args.vy, args.wz])
         rollout.append(state)
@@ -105,7 +131,7 @@ def main():
 
     # Match the rendered model to the simulated one.
     mj_model = env.mj_model
-    mj_model.pair_friction[0:2, 0:2] = args.friction
+    mj_model.pair_friction[0:floor_pair_count, 0:2] = args.friction
 
     if args.camera in ("side", "front", "chase"):
         # Free camera with world up-axis. The only camera in the model is
@@ -131,6 +157,151 @@ def main():
     print(f"wrote {out}  ({len(frames)} frames, {args.seconds}s)")
     print(f"  friction={args.friction}  command=({args.vx},{args.vy},{args.wz})")
     print(f"  falls during clip: {slips}")
+    if args.climb:
+        import numpy as np
+
+        qpos = np.stack([np.asarray(item.data.qpos) for item in rollout])
+        action_array = np.stack([np.asarray(item) for item in actions])
+        feet = np.stack([
+            np.asarray(item.info["last_contact"]) for item in rollout
+        ])
+        hands = np.stack([
+            np.asarray(item.info["last_hand_contact"]) for item in rollout
+        ])
+        uphill_axis = np.asarray(env._slope_tangent)
+        episode_start = np.asarray([
+            item.info["start_uphill_position"] for item in rollout
+        ])
+        uphill = qpos[:, :3] @ uphill_axis - episode_start
+        foot_z = np.stack([
+            np.asarray(item.data.site_xpos[env._feet_site_id, 2])
+            for item in rollout
+        ])
+        foot_reach = np.stack([
+            np.asarray(item.data.site_xpos[env._feet_site_id]) @ uphill_axis
+            for item in rollout
+        ])
+        hand_reach = np.stack([
+            np.asarray(item.data.site_xpos[env._hands_site_id]) @ uphill_axis
+            for item in rollout
+        ])
+        slope_normal = np.asarray(env._slope_normal)
+        hand_clearance = np.stack([
+            np.asarray(item.data.site_xpos[env._hands_site_id]) @ slope_normal
+            - env._terrain_plane_offset
+            for item in rollout
+        ])
+        diagonal_sync = np.mean((~hands) == (~feet[:, ::-1]))
+        motor_targets = np.stack([
+            np.asarray(item.info["motor_targets"]) for item in rollout
+        ])
+        phase = np.stack([
+            np.asarray(item.info["phase"]) for item in rollout
+        ])
+        # Central two thirds of the half-wave excludes expected contact at
+        # liftoff/touchdown boundaries and measures failure to unload.
+        desired_foot_swing = np.cos(phase) > 0.5
+        swing_contact = np.sum(feet & desired_foot_swing, axis=0) / np.maximum(
+            np.sum(desired_foot_swing, axis=0), 1
+        )
+        leg_indices = [0, 3, 6, 9]
+        arm_indices = [15, 18, 22, 25]
+        pelvis_clearance = (
+            qpos[:, :3] @ slope_normal - env._terrain_plane_offset
+        )
+        uphill_velocity = np.asarray([
+            item.metrics["climb/uphill_velocity"] for item in rollout
+        ])
+        velocity_reward = np.asarray([
+            item.metrics["reward/uphill_progress"] for item in rollout
+        ])
+        hand_lift_metric = np.asarray([
+            item.metrics["climb/hand_lift_height"] for item in rollout
+        ])
+        hand_lift_events = np.asarray([
+            item.metrics["climb/hand_lift_target"] for item in rollout
+        ])
+        hand_lift_reward = np.asarray([
+            item.metrics["reward/hand_lift_height"] for item in rollout
+        ])
+        knee_clearance = np.asarray([
+            item.metrics["climb/knee_clearance_min"] for item in rollout
+        ])
+        knee_contact = np.asarray([
+            item.metrics["climb/knee_contact_fraction"] for item in rollout
+        ])
+        knee_clearance_reward = np.asarray([
+            item.metrics["reward/knee_clearance"] for item in rollout
+        ])
+        large_foot_step_bonus = np.asarray([
+            item.metrics["climb/large_foot_step_bonus"] for item in rollout
+        ])
+        print("  rollout diagnostics:")
+        print(
+            f"    uphill final/max/min={uphill[-1]:+.3f}/"
+            f"{uphill.max():+.3f}/{uphill.min():+.3f} m"
+        )
+        print(
+            f"    action rms={np.sqrt(np.mean(action_array**2)):.3f}; "
+            f"joint peak-to-peak mean={np.ptp(qpos[:, 7:], axis=0).mean():.3f} rad"
+        )
+        print(
+            f"    foot contact={feet.mean(axis=0)}; transitions="
+            f"{np.count_nonzero(np.diff(feet.astype(int), axis=0), axis=0)}"
+        )
+        print(
+            f"    hand contact={hands.mean(axis=0)}; transitions="
+            f"{np.count_nonzero(np.diff(hands.astype(int), axis=0), axis=0)}"
+        )
+        print(
+            f"    foot vertical excursion={np.ptp(foot_z, axis=0)} m; "
+            f"foot uphill excursion={np.ptp(foot_reach, axis=0)} m; "
+            f"hand uphill excursion={np.ptp(hand_reach, axis=0)} m"
+        )
+        print(
+            f"    hand terrain-normal excursion="
+            f"{np.ptp(hand_clearance, axis=0)} m; "
+            f"diagonal swing sync={diagonal_sync:.3f}"
+        )
+        print(
+            f"    foot contact during scheduled swing={swing_contact}; "
+            f"leg target p2p="
+            f"{np.ptp(motor_targets[:, leg_indices], axis=0)}; "
+            f"actual p2p="
+            f"{np.ptp(qpos[:, 7 + np.asarray(leg_indices)], axis=0)}"
+        )
+        print(
+            f"    arm target p2p={np.ptp(motor_targets[:, arm_indices], axis=0)}; "
+            f"actual p2p={np.ptp(qpos[:, 7 + np.asarray(arm_indices)], axis=0)}"
+        )
+        print(
+            f"    pelvis terrain-normal min/max="
+            f"{pelvis_clearance.min():.3f}/{pelvis_clearance.max():.3f} m"
+        )
+        print(
+            f"    uphill velocity mean/max={uphill_velocity.mean():+.3f}/"
+            f"{uphill_velocity.max():+.3f} m/s; "
+            f"scaled velocity reward mean={velocity_reward.mean():.3f}"
+        )
+        print(
+            f"    hand lift max={hand_lift_metric.max():.3f} m / "
+            f"target={env._config.reward_config.max_hand_height:.5f} m; "
+            f"target events={int(hand_lift_events.sum())}; "
+            f"scaled lift reward mean={hand_lift_reward.mean():.3f}"
+        )
+        print(
+            f"    knee surface clearance min/mean="
+            f"{knee_clearance.min():.3f}/{knee_clearance.mean():.3f} m; "
+            f"contact-frame fraction={np.mean(knee_contact > 0):.3f}; "
+            f"scaled clearance reward mean="
+            f"{knee_clearance_reward.mean():.3f}"
+        )
+        print(
+            f"    large-foot-step events="
+            f"{np.count_nonzero(large_foot_step_bonus > 0)}; "
+            f"bonus sum/max={large_foot_step_bonus.sum():.3f}/"
+            f"{large_foot_step_bonus.max():.3f}"
+        )
 
 
 def _render_free(env, rollout, cam, width, height):

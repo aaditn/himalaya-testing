@@ -1,11 +1,14 @@
 # himalaya
 
-RL locomotion for the Unitree G1 (29-DOF). Sim-only.
+RL four-limb climbing for the Unitree G1 (29-DOF). Sim-only.
 
 ## What this is
 
-Train a G1 humanoid to walk, in simulation, using PPO on MuJoCo MJX
-(via MuJoCo Playground).
+Train a G1 to ascend rough, steep terrain in a continuous crawl using its
+microspike-modeled hands and feet. The implementation is based directly on
+[`aaditn/himalaya-testing`](https://github.com/aaditn/himalaya-testing): its
+vendored MuJoCo Playground environment, PPO trainer, domain randomization,
+recording workflow, pod helpers, and run layout remain the platform.
 
 ## Layout
 
@@ -14,7 +17,9 @@ himalaya/env/             the task: rewards, observations, termination
 himalaya/mjx/             loads the G1 from MuJoCo Menagerie
 himalaya/utils/           early-kill monitor for long jobs
 scripts/train.py          PPO training -> runs/<name>/
+scripts/train_climb_curriculum.py  staged 5° -> 42° training
 scripts/record.py         render a trained policy to MP4
+scripts/upload_huggingface.py      package/upload a run
 scripts/view.py           watch the robot locally in MuJoCo's viewer
 scripts/inspect_model.py  does the robot stand? (no policy, no rewards)
 scripts/pod/              pull results off a training pod
@@ -33,8 +38,22 @@ it looks. brax traces `step` through `jax.jit`, so a monkeypatch applied after
 tracing is silently ignored during training while still passing every isolated
 test. Owning the file removes that failure mode.
 
-Modifications carry a `MODIFIED:` comment. So far: stricter fall termination
-(`MAX_TILT`, `MIN_TORSO_HEIGHT` in `joystick.py`).
+Modifications carry a `MODIFIED:` comment. The `climb_terrain` task adds an
+IK-solved crawl reset, inclined rough terrain, 44 microspike contact pairs,
+palm contact/load sensing, continuous hand support and diagonal gait rewards,
+climb observations/metrics, and crawl-aware termination. Each stock rubber
+hand is replaced by a visible, rigid 5 cm-radius sphere centered on the palm
+site. The sphere is the hand contact patch; it is attached to the wrist rather
+than a freely rolling ball. Existing palm sites, force sensors, contact names,
+rewards, and boulder pairs are retained.
+
+The spherical end-effectors use nearly straight wrists: roll, pitch, and yaw
+are centered at zero and limited to +/-0.08 rad, with wrist position gain 20
+and +/-25 Nm actuator limits. This retains a small compliant envelope while
+preventing a wrist from folding and wedging the forearm against the terrain.
+In the same four-second, 5-degree reference-only check used for the unrestricted
+wrists, this changed the result from two falls and +0.066 m net ascent to zero
+falls and +0.224 m net ascent.
 
 ```
 himalaya/env/joystick.py       24 reward/cost terms, observations, termination
@@ -58,52 +77,170 @@ Menagerie.
 
 ```bash
 python scripts/inspect_model.py            # sanity: does the robot stand?
-python scripts/train.py --timesteps 60_000_000
-python scripts/record.py runs/<name>/policy --out videos/walk.mp4
+python scripts/train.py --climb --slope 12 --timesteps 4_096 --envs 8 --name smoke
+python scripts/train_climb_curriculum.py --envs 8192 --prefix g1_climb
+python scripts/record.py runs/<name>/policy --climb --slope 12 --out videos/climb.mp4
 ```
 
-## Configurable slope-track designer
-
-This project adds a plug-and-play MuJoCo slope environment with a local browser
-control panel. The saved configuration drives the real MuJoCo heightfield and
-contact friction used by the preview model.
-
-![MuJoCo configurable slope track](artifacts/track-preview.png)
-
-Available controls:
-
-- flat reset area on/off, with adjustable length;
-- slope angle from 5 to 45 degrees;
-- contact friction from 0.20 to 1.50;
-- deterministic surface roughness from 0 to 50 mm;
-- ramp length, summit length, track width, and terrain seed.
-
-Open the designer:
+Upload a completed run after `hf auth login`:
 
 ```bash
-python scripts/track_designer.py
+python scripts/upload_huggingface.py runs/<final-stage> your-org/g1-four-limb-climb --private
 ```
 
-Move the sliders and select **Save track**. The validated settings are written
-to `configs/track.json`.
+## Four-limb climbing task
 
-Open that exact saved track in MuJoCo:
+The desired gait is deliberately closer to walking on all fours than occasional
+scrambling. Two 180°-opposed hand schedules overlap during hand exchange, so a
+new palm is expected to load before the old palm lifts. The policy is rewarded
+for at least one planted hand, diagonal hand-foot support, uphill motion while
+supported, signed uphill displacement, uphill ground-reaction force delivered
+through contacted feet, and a stage-specific hand load share. The foot-drive
+term is multiplied by positive mountain progress, so bracing or stamping in
+place does not earn it. Sliding a planted palm is penalized. Signed potential
+progress has scale 10.0 and is computed from pelvis displacement along the
+slope. Uphill motion receives full credit with hand support and 30% during a
+brief hand exchange; downhill motion is penalized 1.75x. New episode-high
+progress has scale 3.0, and each new 0.25 m waypoint receives a one-time 2.0
+bonus. Waypoints follow the episode maximum, so crossing the same ground twice
+cannot farm reward. Hand, diagonal-support, load-share, and foot-drive shaping
+is gated by positive displacement. A -0.05 time cost and termination after
+three seconds without a new 5 mm progress checkpoint discourage settling in
+place; losing 0.35 m from the episode high also terminates the episode.
+
+Large leg steps receive an additional foot-only, one-time touchdown bonus. It
+uses uphill plant advance normalized by the 20 cm target, squares that value,
+and compensates for the environment timestep. A 10 cm qualifying step earns
+0.25, a 20 cm step earns 1.0, and a 30 cm step earns 2.25 at scale 1.0. A foot
+must remain airborne for at least 80 ms and land beyond its episode-best plant,
+so sliding, contact chatter, and repeated stamping cannot farm the bonus. The
+reference-only diagnostic produced one qualifying event worth 0.135; improved
+step frequency and length are unverified pending fresh training.
+
+Dense forward-velocity shaping has scale 2.5, secondary to the 10.0 signed
+displacement potential. It projects pelvis velocity onto the uphill slope
+axis, pays linearly from zero to the commanded speed, and saturates at the
+command. It is zero for stationary/backward motion, invalid crawl posture, or
+loss of mixed hand-foot support. The signed potential remains responsible for
+penalizing regression. In a four-second reference-only check at a 0.15 m/s
+command, mean/max uphill velocity was +0.036/+0.439 m/s and mean scaled velocity
+reward was 0.359, with zero falls.
+
+The scheduled swing palm also has a 0.8 ft (0.24384 m) lift objective measured
+terrain-normal from that hand's last meaningful plant height. This makes the
+measurement valid after planting on a boulder rather than only on the nominal
+slope plane. Smooth lift credit has scale 0.5 and saturates at the target; a
+one-time threshold-crossing bonus has scale 0.2 and resets only after the palm
+replants. Both require the opposite palm, at least one foot, valid posture, and
+the correct swing phase, so lifting both hands or holding one aloft cannot farm
+reward. The generic phase-height term is disabled because it requested hand
+clearance during scheduled support. Opposed 60% hand duty cycles retain 20%
+two-hand overlap while leaving 40% of each cycle for lift and reach. The final
+zero-action reference reaches 0.108 m and correctly earns zero threshold
+events; reaching 0.24384 m is unverified pending fresh training.
+
+Knee grounding is handled by a differentiable terrain-clearance reward rather
+than a world-Z heuristic. For each knee body origin, the environment subtracts
+a measured 6 cm housing radius, configured height-field relief, and the nearest
+physical boulder surface. A smooth positive reward (scale 0.2) saturates at 5
+cm surface clearance and receives full weight while moving uphill; a small 20%
+bootstrap component teaches the posture before motion starts. Crossing the
+zero-clearance envelope incurs a separate -1.0 contact cost. This does not add
+knee-ground collision pairs or change the 114/230 observation interface. In
+the four-second reference-only diagnostic, the pre-training gait violated the
+conservative envelope in 40.5% of frames with -9.0 cm minimum clearance, so the
+desired no-knee-contact behavior is unverified pending fresh training.
+
+Episodes begin in an IK-solved, forward-biased suspended crouch: both palms and
+both feet retain their previous plant locations while the torso is exactly 10
+cm farther uphill. The pelvis remains about 49 cm above the local ramp, knee
+joint clearance is 18 cm, both wrists are straight, and no shin, thigh, pelvis,
+or torso geom supports the robot. At the 12° reference grade the torso moves
+from `[0.054, 0, 0.705]` to `[0.151, 0, 0.726]` m. Because this keyframe is also
+the position-controller reference, checkpoints trained before the forward-pose
+change must not be used as final policies; restart the curriculum at stage one.
+The old zero-action crawl reference is not dynamically compatible with the new
+pose: its four-second 5° check had one fall and essentially zero net progress.
+This pose is provided for pre-training review, not as a trained result.
+
+The curriculum in `configs/curriculum.json` first learns support exchange on a
+5° grade with 5 mm relief and no boulders, then transfers to a smooth 12°
+grade, and only then introduces 6 cm relief and the rocks. It subsequently
+progresses through 20°, 28°, 35°, and a terminal 42° stage while increasing
+terrain relief to 15 cm and desired hand loading to 40%. The terminal angle is
+just inside the nominal friction limit: tan(42°) is about 0.90 versus 0.95
+microspike friction. Ten fixed 10-inch-diameter (0.254 m) boulders are
+distributed across every rocky stage. Each boulder has explicit collision
+pairs with both palms and both feet; it is not a visual-only prop. Boulder
+centers are placed one compiled radius above the sampled ramp, so changing rock
+size cannot bury or float them. Disabled boulders are moved below the terrain
+without changing model topology, so each stage can restore the previous Orbax
+checkpoint.
+
+Changing the configured grade also rigidly rotates/translates the suspended
+crouch keyframe about the floor origin. This preserves all four initial
+hand/foot contacts and torso alignment instead of leaving the robot posed for
+the original 12° ramp. At 42°, the compiled reset retains four-point contact
+and 0.978 torso-to-slope alignment. The untrained reference is not capable on
+the terminal terrain: a four-second check produced eight terminations and net
+downhill motion. Completion of the 35° stage followed by fresh 42° training is
+required before claiming competence.
+
+Start this curriculum without `--restore`. Earlier smoke checkpoints learned
+to pitch or collapse uphill under obsolete rewards and are useful controls,
+not production initialization:
 
 ```bash
-python scripts/view_track.py
+python scripts/train_climb_curriculum.py --envs 8192 --prefix g1_climb
 ```
 
-On macOS, use `mjpython scripts/view_track.py`. For a non-GUI check or a PNG
-render:
+Microspikes are represented at contact-patch scale on the spherical hand
+end-effectors and feet, with isotropic tangential friction sampled uniformly
+from 0.9 to 1.0, torsional coefficient 0.08, rolling coefficient 0.03, and
+compliant six-dimensional contacts.
+This is useful for policy discovery and sensitivity analysis; it does not model
+individual teeth biting, clogging, breaking substrate, or pulling out.
 
-```bash
-python scripts/view_track.py --headless
-python scripts/view_track.py --image artifacts/track-preview.png
-```
+Diagnostics showed why the early policies did not step: they already moved
+joints and lifted feet, but the stock foot-phase reward used absolute world Z
+despite the offset/inclined terrain, contact chatter counted as touchdown, and
+there was no credit for a farther-uphill plant. More importantly, falling
+forward could earn much more displacement reward than the scaled terminal
+cost. The environment now uses terrain-normal swing clearance, requires 80 ms
+air time for a touchdown, rewards only new episode-best limb plants, gates
+positive displacement by pelvis clearance and torso alignment, and claws back
+episode ascent credit on failure. The reward gate begins at 36 cm terrain-normal
+pelvis clearance; the hard fall threshold is 25 cm to leave recovery margin.
 
-The reusable Python API is in `himalaya/track.py`: `TrackConfig` validates the
-controls, `generate_heightfield` creates deterministic geometry, and
-`apply_track_to_model` applies the heightfield and friction to MuJoCo.
+Arm motion is coupled explicitly to the opposite leg through a small residual
+crawl reference: right hand swings with left foot, then left hand with right
+foot. The reference advances/lifts hip and knee together with opposite shoulder
+pitch, shoulder roll, and elbow, while the planted diagonal extends its knee and
+elbow to unload the moving pair. PPO actions correct that reference rather than
+having to discover coordination from noise. The crawl clock is 0.70-0.95 Hz
+instead of the stock 1.25-1.5 Hz biped cadence. Static whole-pose, hip, and knee
+deviation costs are disabled for climbing because they penalized the required
+cyclic motion; action-rate, energy, collision, soft joint-limit, posture, and
+fall safeguards remain. Generic foot phase-height shaping is also disabled
+because it conflicted with planted support; completed foot air time is rewarded
+instead.
+
+The hip reference is now a continuous +/-0.30 rad fore-aft sweep: the airborne
+leg reaches while the planted leg retracts and pushes the pelvis uphill. Knee
+lift remains a stable 0.38 rad half-wave, and touchdown advance is normalized
+against a 20 cm target. In the same four-second reference-only check, the final
+configuration produced zero falls, 24.9 cm net ascent, 5.9 cm/s mean uphill
+velocity, and 14.5-18.8 cm foot excursions. The preceding one-sided large-step
+reference produced 20.0 cm net ascent. The right foot still unloads less
+cleanly than the left, so fresh PPO training must learn the remaining weight
+shift before this is considered a finished crawl.
+
+Short 8,320-step CPU smoke runs verify compilation and expose failure modes;
+they do not train a crawl. The old collapse-trained checkpoint still fell once
+in a two-second bootstrap evaluation and must not be treated as fixed merely
+because it translated uphill. A fresh 30-million-step GPU bootstrap and
+held-out terrain evaluation are required before claiming a successful climbing
+policy or Class 2 capability.
 
 Locally on macOS the viewer needs `mjpython`, not `python`, because the GUI
 must own the main thread:

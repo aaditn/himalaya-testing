@@ -13,7 +13,7 @@ import mujoco
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from himalaya.mjx import g1_29dof  # noqa: E402
+from himalaya.mjx import g1_29dof
 
 
 def main():

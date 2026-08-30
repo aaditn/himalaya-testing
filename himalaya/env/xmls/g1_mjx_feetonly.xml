@@ -60,16 +60,19 @@
         <joint axis="0 1 0" range="-1.0472 2.0944" actuatorfrcrange="-25 25" armature="0.003609725"/>
       </default>
       <default class="wrist">
-        <position kp="2"/>
-        <joint damping=".2"/>
+        <!-- MODIFIED: ball end-effectors need a nearly straight load path.
+             Retain small compliance without allowing the wrist to fold and
+             wedge the forearm against rough terrain. -->
+        <position kp="20"/>
+        <joint damping="1"/>
         <default class="wrist_roll">
-          <joint axis="1 0 0" range="-1.97222 1.97222" actuatorfrcrange="-25 25" armature="0.003609725"/>
+          <joint axis="1 0 0" range="-0.08 0.08" actuatorfrcrange="-25 25" armature="0.003609725"/>
         </default>
         <default class="wrist_pitch">
-          <joint axis="0 1 0" range="-1.61443 1.61443" actuatorfrcrange="-5 5" armature="0.00425"/>
+          <joint axis="0 1 0" range="-0.08 0.08" actuatorfrcrange="-25 25" armature="0.00425"/>
         </default>
         <default class="wrist_yaw">
-          <joint axis="0 0 1" range="-1.61443 1.61443" actuatorfrcrange="-5 5" armature="0.00425"/>
+          <joint axis="0 0 1" range="-0.08 0.08" actuatorfrcrange="-25 25" armature="0.00425"/>
         </default>
       </default>
 
@@ -336,10 +339,12 @@
                           <joint name="left_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
-                          <geom name="left_hand_collision" class="collision" type="capsule" size="0.05"
-                            fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
+                          <!-- MODIFIED: spherical microspike end-effector.
+                               Name/site stay unchanged so sensors, rewards,
+                               and explicit terrain/boulder pairs still bind. -->
+                          <geom name="left_hand_collision" class="collision" type="sphere"
+                            pos="0.08 0 0" size="0.05" rgba=".15 .35 1 1"/>
                         </body>
                       </body>
                     </body>
@@ -390,10 +395,10 @@
                           <joint name="right_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
-                          <geom name="right_hand_collision" class="collision" type="capsule" size="0.05"
-                            fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
+                          <!-- MODIFIED: visible sphere replaces rubber hand. -->
+                          <geom name="right_hand_collision" class="collision" type="sphere"
+                            pos="0.08 0 0" size="0.05" rgba=".15 .35 1 1"/>
                         </body>
                       </body>
                     </body>

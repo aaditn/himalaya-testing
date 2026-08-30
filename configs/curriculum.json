@@ -1,0 +1,88 @@
+{
+  "stages": [
+    {
+      "name": "crawl-bootstrap-5deg",
+      "slope_degrees": 5,
+      "roughness_m": 0.005,
+      "boulders_enabled": false,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.15,
+      "target_hand_load_share": 0.25,
+      "num_timesteps": 30000000,
+      "num_evals": 6,
+      "terrain_seed": 5
+    },
+    {
+      "name": "crawl-foundation-12deg",
+      "slope_degrees": 12,
+      "roughness_m": 0.020,
+      "boulders_enabled": false,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.20,
+      "target_hand_load_share": 0.20,
+      "num_timesteps": 40000000,
+      "num_evals": 6,
+      "terrain_seed": 11
+    },
+    {
+      "name": "rocky-crawl-12deg",
+      "slope_degrees": 12,
+      "roughness_m": 0.060,
+      "boulders_enabled": true,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.25,
+      "target_hand_load_share": 0.22,
+      "num_timesteps": 40000000,
+      "num_evals": 8,
+      "terrain_seed": 17
+    },
+    {
+      "name": "four-limb-20deg",
+      "slope_degrees": 20,
+      "roughness_m": 0.080,
+      "boulders_enabled": true,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.35,
+      "target_hand_load_share": 0.25,
+      "num_timesteps": 50000000,
+      "num_evals": 8,
+      "terrain_seed": 22
+    },
+    {
+      "name": "diagonal-crawl-28deg",
+      "slope_degrees": 28,
+      "roughness_m": 0.100,
+      "boulders_enabled": true,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.30,
+      "target_hand_load_share": 0.30,
+      "num_timesteps": 80000000,
+      "num_evals": 10,
+      "terrain_seed": 33
+    },
+    {
+      "name": "steep-crawl-35deg",
+      "slope_degrees": 35,
+      "roughness_m": 0.120,
+      "boulders_enabled": true,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.25,
+      "target_hand_load_share": 0.35,
+      "num_timesteps": 120000000,
+      "num_evals": 12,
+      "terrain_seed": 44
+    },
+    {
+      "name": "friction-limit-crawl-42deg",
+      "slope_degrees": 42,
+      "roughness_m": 0.150,
+      "boulders_enabled": true,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.20,
+      "target_hand_load_share": 0.40,
+      "num_timesteps": 160000000,
+      "num_evals": 16,
+      "terrain_seed": 57
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+<mujoco model="g1 four limb climb terrain">
+  <include file="g1_mjx_feetonly.xml"/>
+
+  <statistic center="1 0 .5" extent="4" meansize=".05"/>
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".25 .25 .25" specular=".5 .5 .5"/>
+    <rgba contactforce="1 .25 .1 1"/>
+    <global azimuth="135" elevation="-18"/>
+    <map force=".02"/>
+  </visual>
+
+  <asset>
+    <texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
+    <material name="groundplane" texture="groundplane" texuniform="true"
+      texrepeat="5 2" reflectance=".35"/>
+    <hfield name="hfield" file="assets/hfield.png" size="8 2.5 .060 1.0"/>
+  </asset>
+
+  <worldbody>
+    <!-- MODIFIED: base.py sets grade and roughness from config before MJX conversion. -->
+    <geom name="floor" type="hfield" hfield="hfield" pos="0 0 .2"
+      quat=".994521895 0 -.104528463 0" material="groundplane"/>
+    <!-- MODIFIED: ten fixed 10-inch (0.254 m) boulders. base.py places each
+         center one radius above the configured, rotated rough surface. -->
+    <geom name="boulder_00" type="sphere" size=".127" pos=".85 -.65 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_01" type="sphere" size=".127" pos="1.25 .55 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_02" type="sphere" size=".127" pos="1.75 -.15 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_03" type="sphere" size=".127" pos="2.20 .90 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_04" type="sphere" size=".127" pos="2.65 -.95 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_05" type="sphere" size=".127" pos="3.10 .25 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_06" type="sphere" size=".127" pos="3.60 -.45 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_07" type="sphere" size=".127" pos="4.10 1.05 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_08" type="sphere" size=".127" pos="4.65 -.85 .3" material="groundplane" contype="0" conaffinity="0"/>
+    <geom name="boulder_09" type="sphere" size=".127" pos="5.20 .40 .3" material="groundplane" contype="0" conaffinity="0"/>
+  </worldbody>
+
+  <contact>
+    <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor"
+      condim="6" friction=".95 .95 .08 .03 .03" solref=".008 1"
+      solimp=".95 .99 .001"/>
+    <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor"
+      condim="6" friction=".95 .95 .08 .03 .03" solref=".008 1"
+      solimp=".95 .99 .001"/>
+    <!-- MODIFIED: explicit pairs are required because the MJX G1's simplified
+         foot and hand collision geoms have contype/conaffinity disabled. -->
+    <pair name="left_foot_boulder_00" geom1="left_foot" geom2="boulder_00"/><pair name="right_foot_boulder_00" geom1="right_foot" geom2="boulder_00"/><pair name="left_hand_boulder_00" geom1="left_hand_collision" geom2="boulder_00"/><pair name="right_hand_boulder_00" geom1="right_hand_collision" geom2="boulder_00"/>
+    <pair name="left_foot_boulder_01" geom1="left_foot" geom2="boulder_01"/><pair name="right_foot_boulder_01" geom1="right_foot" geom2="boulder_01"/><pair name="left_hand_boulder_01" geom1="left_hand_collision" geom2="boulder_01"/><pair name="right_hand_boulder_01" geom1="right_hand_collision" geom2="boulder_01"/>
+    <pair name="left_foot_boulder_02" geom1="left_foot" geom2="boulder_02"/><pair name="right_foot_boulder_02" geom1="right_foot" geom2="boulder_02"/><pair name="left_hand_boulder_02" geom1="left_hand_collision" geom2="boulder_02"/><pair name="right_hand_boulder_02" geom1="right_hand_collision" geom2="boulder_02"/>
+    <pair name="left_foot_boulder_03" geom1="left_foot" geom2="boulder_03"/><pair name="right_foot_boulder_03" geom1="right_foot" geom2="boulder_03"/><pair name="left_hand_boulder_03" geom1="left_hand_collision" geom2="boulder_03"/><pair name="right_hand_boulder_03" geom1="right_hand_collision" geom2="boulder_03"/>
+    <pair name="left_foot_boulder_04" geom1="left_foot" geom2="boulder_04"/><pair name="right_foot_boulder_04" geom1="right_foot" geom2="boulder_04"/><pair name="left_hand_boulder_04" geom1="left_hand_collision" geom2="boulder_04"/><pair name="right_hand_boulder_04" geom1="right_hand_collision" geom2="boulder_04"/>
+    <pair name="left_foot_boulder_05" geom1="left_foot" geom2="boulder_05"/><pair name="right_foot_boulder_05" geom1="right_foot" geom2="boulder_05"/><pair name="left_hand_boulder_05" geom1="left_hand_collision" geom2="boulder_05"/><pair name="right_hand_boulder_05" geom1="right_hand_collision" geom2="boulder_05"/>
+    <pair name="left_foot_boulder_06" geom1="left_foot" geom2="boulder_06"/><pair name="right_foot_boulder_06" geom1="right_foot" geom2="boulder_06"/><pair name="left_hand_boulder_06" geom1="left_hand_collision" geom2="boulder_06"/><pair name="right_hand_boulder_06" geom1="right_hand_collision" geom2="boulder_06"/>
+    <pair name="left_foot_boulder_07" geom1="left_foot" geom2="boulder_07"/><pair name="right_foot_boulder_07" geom1="right_foot" geom2="boulder_07"/><pair name="left_hand_boulder_07" geom1="left_hand_collision" geom2="boulder_07"/><pair name="right_hand_boulder_07" geom1="right_hand_collision" geom2="boulder_07"/>
+    <pair name="left_foot_boulder_08" geom1="left_foot" geom2="boulder_08"/><pair name="right_foot_boulder_08" geom1="right_foot" geom2="boulder_08"/><pair name="left_hand_boulder_08" geom1="left_hand_collision" geom2="boulder_08"/><pair name="right_hand_boulder_08" geom1="right_hand_collision" geom2="boulder_08"/>
+    <pair name="left_foot_boulder_09" geom1="left_foot" geom2="boulder_09"/><pair name="right_foot_boulder_09" geom1="right_foot" geom2="boulder_09"/><pair name="left_hand_boulder_09" geom1="left_hand_collision" geom2="boulder_09"/><pair name="right_hand_boulder_09" geom1="right_hand_collision" geom2="boulder_09"/>
+  </contact>
+
+  <include file="sensor.xml"/>
+
+  <keyframe>
+    <!-- MODIFIED: forward-biased symmetric four-point crouch. The torso is
+         10 cm farther uphill while the original feet/palm plants are fixed. -->
+    <key name="knees_bent" qpos="
+      .1074149 0 .7228784 .6998725 0 .7142678 0
+      -1.7707609 0 0 .9893879 -.6413518 0
+      -1.7707609 0 0 .9893879 -.6413518 0
+      0 0 .2127582
+      -1.0858851 .2822112 .4664454 .3519525 0 0 0
+      -1.0858851 -.2822112 -.4664454 .3519525 0 0 0"
+      ctrl="
+      -1.7707609 0 0 .9893879 -.6413518 0
+      -1.7707609 0 0 .9893879 -.6413518 0
+      0 0 .2127582
+      -1.0858851 .2822112 .4664454 .3519525 0 0 0
+      -1.0858851 -.2822112 -.4664454 .3519525 0 0 0"/>
+  </keyframe>
+</mujoco>

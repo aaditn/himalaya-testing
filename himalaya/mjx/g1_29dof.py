@@ -28,9 +28,8 @@ that judges the physics rather than trains a policy -- inspection, viewing,
 and any measurement quoted as a fact about the robot.
 """
 
-from etils import epath
-
 import mujoco
+from etils import epath
 
 # Measured, not copied. Re-run scripts/inspect_model.py after any model change.
 STANDING_HEIGHT = 0.7837
