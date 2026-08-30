@@ -30,12 +30,16 @@ import mujoco.viewer
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-# himalaya.env.scene is numpy-only on purpose, so importing it here does NOT
-# pull jax onto the laptop. It owns the scene list, the slope maths, the spawn
-# constants and the asset loading, which is what stops this viewer from
-# drifting away from what actually trains.
-from himalaya.env import scene as sc
+# Load scene.py BY PATH, not as himalaya.env.scene: the package __init__
+# imports joystick, which imports jax, so a normal import would pull the entire
+# training stack onto a laptop that only needs mujoco. scene.py itself is numpy
+# only, which is what lets this viewer share the trainer's constants instead of
+# keeping its own drifting copy.
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location(
+    "himalaya_scene", ROOT / "himalaya" / "env" / "scene.py")
+sc = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(sc)
 
 SCENES = {"mountain": "mountain_terrain", "flat": "flat_terrain",
           "rough": "rough_terrain"}
@@ -51,28 +55,34 @@ def build(scene, slope_deg):
 # --- all-fours pose -------------------------------------------------------
 # Order after the 7 free-joint values: 6 left leg, 6 right leg, 3 waist,
 # 7 left arm, 7 right arm. See himalaya/env/g1_constants.py.
-ALL_FOURS = np.array([
-    # Solved numerically, not guessed: search over hip pitch, knee, ankle,
-    # waist pitch, shoulder pitch/roll and elbow for a stance with the palms
-    # level with the soles and well forward of them. Result: hands 0.055 m
-    # above the feet, 0.28 m in front.
+CROUCH = np.array([
+    # Deep crouch with the palms planted BESIDE the feet -- not a quadruped
+    # stance, which this robot cannot assume. Measured: the arm is 0.460 m
+    # shoulder-to-palm, the leg 0.657 m hip-to-sole, and the shoulder sits
+    # 0.394 m above the hip, leaving a 0.631 m deficit to the ground. Waist
+    # pitch caps at 30 degrees and its segment is only 0.291 m long, so folding
+    # there drops the shoulder just 0.038 m. Only the hip has the authority,
+    # and folding at the hip swings the feet backward as fast as it brings the
+    # hands forward. Searching 400k poses, 35k of them self-collision free, the
+    # maximum forward reach of palm past foot is 0.144 m -- 0.077 m with the
+    # palms at sole level. A bear-crawl needs 0.4-0.5 m.
     #
-    # Two constraints shape it. Waist pitch caps at +/-0.52 rad (30 deg), so
-    # the torso CANNOT fold far at the waist -- the lean has to come from the
-    # hips, which is why hip pitch sits at -0.80 with the knee near its 2.88
-    # limit. And shoulder pitch is negative-forward, so reaching a palm
-    # downhill needs a negative value.
+    # So the hands go to the SIDES, where they can brace against the corridor
+    # banks, which is what the walls are for.
+    #
+    # This pose was solved with self-intersection as a hard constraint; the
+    # previous one put the hands through the thighs by 0.086 m.
     #
     #  left leg: hip p/r/y, knee, ankle p/r
-    -0.801, 0.000, 0.000, 2.836, -0.216, 0.000,
+    -2.498, 0.947, 0.000, 1.024, -0.584, 0.000,
     # right leg
-    -0.801, 0.000, 0.000, 2.836, -0.216, 0.000,
+    -2.498, -0.524, 0.000, 1.024, -0.584, 0.000,
     # waist yaw/roll/pitch, then left shoulder pitch/roll/yaw
-    0.000, 0.000, 0.458, -0.574, 0.015, 0.000,
+    0.000, 0.000, 0.498, -1.753, 0.116, 0.107,
     # left elbow, left wrist r/p/y, right shoulder pitch/roll
-    1.431, 0.000, 0.000, 0.000, -0.574, -0.015,
+    1.604, 0.000, 0.000, 0.000, -1.753, -0.116,
     # right shoulder yaw, right elbow, right wrist r/p/y
-    0.000, 1.431, 0.000, 0.000, 0.000,
+    -0.107, 1.604, 0.000, 0.000, 0.000,
 ])
 
 
@@ -81,7 +91,7 @@ def main():
     ap.add_argument("--climb", type=float, default=35.0, help="slope degrees")
     ap.add_argument("--scene", default="mountain", choices=list(SCENES))
     ap.add_argument("--pose", default="knees_bent",
-                    choices=["knees_bent", "home", "all_fours"])
+                    choices=["knees_bent", "home", "crouch"])
     ap.add_argument("--terrain-only", action="store_true",
                     help="hide the robot; look at the mountain")
     ap.add_argument("--free", action="store_true",
@@ -103,8 +113,8 @@ def main():
             key = k
     if model.nkey:
         mujoco.mj_resetDataKeyframe(model, data, key)
-    if args.pose == "all_fours":
-        data.qpos[7:] = ALL_FOURS
+    if args.pose == "crouch":
+        data.qpos[7:] = CROUCH
 
     # --- spawn placement, mirroring joystick.py reset() -------------------
     if slope != 0.0 and not args.terrain_only:
@@ -127,15 +137,39 @@ def main():
         q = data.qpos[3:7].copy()
         mujoco.mju_mulQuat(data.qpos[3:7], tilt, q)
         mujoco.mj_forward(model, data)
-        # lift until the lowest contacting geom clears the terrain
-        lift = 0.0
-        for _ in range(400):
+        # Lift until nothing is inside the FLOOR.
+        #
+        # Only floor contacts count. A self-intersecting pose -- arms through
+        # thighs, say -- never clears however high you lift, so counting every
+        # contact ran this loop to its ceiling and reported a 4 m lift.
+        floor_gid = model.geom("floor").id
+        lift, stuck = 0.0, False
+        for i in range(400):
             mujoco.mj_forward(model, data)
-            if data.ncon and min(data.contact.dist[:data.ncon]) < -0.005:
-                data.qpos[2] += 0.01
-                lift += 0.01
-            else:
+            worst = 0.0
+            for c in range(data.ncon):
+                con = data.contact[c]
+                if floor_gid in (con.geom1, con.geom2):
+                    worst = min(worst, con.dist)
+            if worst >= -0.005:
                 break
+            data.qpos[2] += 0.01
+            lift += 0.01
+        else:
+            stuck = True
+        # Report self-intersection rather than hiding it in a silent lift.
+        selfcon = []
+        for c in range(data.ncon):
+            con = data.contact[c]
+            if floor_gid not in (con.geom1, con.geom2) and con.dist < -0.002:
+                selfcon.append((
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom1),
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom2),
+                    con.dist))
+        if stuck:
+            print("  WARNING: never cleared the floor in 400 steps")
+        for g1, g2, dist in selfcon:
+            print(f"  SELF-INTERSECTION: {g1} <-> {g2} by {-dist:.3f} m")
         print(f"spawn: x={x:.2f} y={y:.2f} z={data.qpos[2]:.2f} "
               f"(lifted {lift:.2f} m clear of the rock)  "
               f"[training range x {sc.SPAWN_X[0]}-{sc.SPAWN_X[1]}]")
