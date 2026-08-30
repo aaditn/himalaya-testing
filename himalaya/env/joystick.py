@@ -98,6 +98,11 @@ def default_config() -> config_dict.ConfigDict:
           ),
           # Target climb rate for progress_uphill, m/s along the surface.
           max_uphill_speed=0.8,
+          # Per-step cost of sitting on the starting platform, in the same
+          # units as progress_uphill. Set below max_uphill_speed so climbing
+          # is always the better option, but high enough that waiting is not
+          # free.
+          platform_loiter=0.5,
           tracking_sigma=0.25,
           max_foot_height=0.15,
           base_height_target=0.5,
@@ -811,14 +816,23 @@ class Joystick(g1_base.G1Env):
       return jp.zeros(())
     speed = jp.dot(global_linvel, jp.array(self._uphill))
     reward = jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
-    # Nothing on the starting platform counts. It exists so the robot begins
-    # on stable ground rather than mid-slope already sliding -- it is a
-    # starting position, not part of the task. Paying for movement there
-    # would just be a flat-ground walking reward the policy could farm
-    # instead of climbing.
+    # The platform is a starting position, not part of the task. Movement
+    # there earns nothing -- otherwise it is just a flat-ground walking
+    # reward to farm instead of climbing.
+    #
+    # But zero is not neutral, it is a SAFE HARBOUR: with termination at -100
+    # and the slope costing reward to slide down, standing still on flat
+    # ground beats attempting the climb. Measured, episode length went 54 ->
+    # 584 steps the moment the platform existed, with reward drifting DOWN --
+    # the policy had found somewhere safe to wait.
+    #
+    # So loitering costs a fixed rate per step. The robot has to leave, and
+    # once on the slope the penalty stops and real climbing reward starts.
     if self._platform_x is not None:
       on_platform = data_x > self._platform_x
-      reward = jp.where(on_platform, 0.0, reward)
+      reward = jp.where(
+          on_platform, -self._config.reward_config.platform_loiter, reward
+      )
     return reward
 
   def _reward_tracking_lin_vel(
