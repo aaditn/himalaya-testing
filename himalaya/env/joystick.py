@@ -62,6 +62,10 @@ def default_config() -> config_dict.ConfigDict:
       reward_config=config_dict.create(
           scales=config_dict.create(
               # Tracking related rewards.
+              # MODIFIED: the climbing objective. Deliberately posture-blind --
+              # it says "go up" and nothing about how. Zero on flat ground, so
+              # every existing task is unchanged.
+              progress_uphill=0.0,
               tracking_lin_vel=1.0,
               tracking_ang_vel=0.75,
               # Base related rewards.
@@ -92,6 +96,8 @@ def default_config() -> config_dict.ConfigDict:
               dof_pos_limits=-1.0,
               pose=-0.1,
           ),
+          # Target climb rate for progress_uphill, m/s along the surface.
+          max_uphill_speed=0.8,
           tracking_sigma=0.25,
           max_foot_height=0.15,
           base_height_target=0.5,
@@ -475,12 +481,30 @@ class Joystick(g1_base.G1Env):
   MAX_TILT = 0.5           # gravity-z; 1.0 = upright, 0.0 = horizontal (~60 deg)
   MIN_TORSO_HEIGHT = 0.4   # metres; nominal standing pelvis is ~0.78
 
+  # Slope-relative fall limits, used when slope_deg != 0.
+  #
+  # A climber on all fours is legitimately pitched 40-70 degrees off the
+  # surface normal (cos(70) = 0.34), so TILT_TOL has to sit well below the
+  # bipedal MAX_TILT or correct behaviour terminates. With the tilt check that
+  # permissive, the clearance check is what actually catches a fall.
+  TILT_TOL = 0.0            # dot(torso_up, slope_normal); 0.0 = past horizontal
+  MIN_SLOPE_CLEARANCE = 0.25  # metres measured ALONG the surface normal
+
   def _get_termination(self, data: mjx.Data) -> jax.Array:
-    # MODIFIED: was `< 0.0`. Fire at ~60 degrees rather than waiting for 90,
-    # and treat a pelvis on the ground as down whatever the orientation --
-    # the case the stock height-free check misses entirely.
-    fall_termination = self.get_gravity(data, "torso")[-1] < self.MAX_TILT
-    fall_termination |= data.qpos[2] < self.MIN_TORSO_HEIGHT
+    if self._slope_rad != 0.0:
+      # MODIFIED: on a slope both stock checks measure against world vertical,
+      # which condemns the target behaviour. A robot aligned to a 45 degree
+      # slope reads gravity_z = 0.707 and its pelvis height is meaningless
+      # once the ground rises with distance. Measure both against the surface.
+      n = jp.array(self._slope_normal)
+      fall_termination = jp.dot(self.get_gravity(data, "torso"), n) < self.TILT_TOL
+      fall_termination |= jp.dot(data.qpos[0:3], n) < self.MIN_SLOPE_CLEARANCE
+    else:
+      # MODIFIED: was `< 0.0`. Fire at ~60 degrees rather than waiting for 90,
+      # and treat a pelvis on the ground as down whatever the orientation --
+      # the case the stock height-free check misses entirely.
+      fall_termination = self.get_gravity(data, "torso")[-1] < self.MAX_TILT
+      fall_termination |= data.qpos[2] < self.MIN_TORSO_HEIGHT
     contact_termination = data.sensordata[
         self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
     ] > 0
@@ -598,6 +622,10 @@ class Joystick(g1_base.G1Env):
   ) -> dict[str, jax.Array]:
     del metrics  # Unused.
     return {
+        # The climbing objective.
+        "progress_uphill": self._reward_progress_uphill(
+            self.get_global_linvel(data, "torso")
+        ),
         # Tracking rewards.
         "tracking_lin_vel": self._reward_tracking_lin_vel(
             info["command"], self.get_local_linvel(data, "pelvis")
@@ -712,6 +740,22 @@ class Joystick(g1_base.G1Env):
     out_of_limits = -jp.clip(qpos - self._soft_lowers, None, 0.0)
     out_of_limits += jp.clip(qpos - self._soft_uppers, 0.0, None)
     return jp.sum(out_of_limits)
+
+  def _reward_progress_uphill(self, global_linvel: jax.Array) -> jax.Array:
+    """Speed up the slope, clipped at a target pace.
+
+    Deliberately says nothing about posture, limb count, or gait -- if
+    quadrupedal climbing is the only way to make progress on a steep slope,
+    that is what the policy should discover, not what this term should
+    prescribe. The clip stops it paying unboundedly for a downhill-then-launch
+    exploit and keeps the scale comparable to the tracking terms.
+
+    Zero on flat ground: uphill is undefined there and the scale is 0 anyway.
+    """
+    if self._slope_rad == 0.0:
+      return jp.zeros(())
+    speed = jp.dot(global_linvel, jp.array(self._uphill))
+    return jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
 
   def _reward_tracking_lin_vel(
       self,

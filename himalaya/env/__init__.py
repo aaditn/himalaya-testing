@@ -33,3 +33,52 @@ behaviour it replaced.
 """
 
 from himalaya.env.joystick import Joystick, default_config  # noqa: F401
+
+
+def climb_config(slope_deg: float = 30.0):
+  """Config for the climbing task: reach the top of a steep rough slope.
+
+  Everything here is a deletion except one added term. The bipedal reward
+  actively forbids the posture a climber needs, so the work is removing those
+  constraints and letting the policy find its own answer:
+
+    orientation (-2.0)    targets a world-vertical torso. Second largest
+                          active term, and a climber on a 45 degree slope is
+                          tilted ~45 degrees, so it pays continuously for
+                          being correct.
+    feet_air_time (+2.0)  largest positive term, and it pays for keeping feet
+                          OFF the ground -- the opposite of four-point contact.
+    feet_phase (+1.0)     a two-limb alternating gait clock scored against
+                          world z. Bipedal by construction, and wrong on a
+                          tilted surface.
+    pose (-0.1)           pulls all 29 joints toward a standing pose, taxing
+                          every reach toward the ground.
+    collision (-0.1)      the only hand-related term, and it PENALISES hand
+                          contact (with the thigh). Exactly the wrong sign.
+    joint_deviation_*     pin hips and knees near a standing configuration.
+    stand_still (-1.0)    would demand a standing pose on a steep slope when
+                          the command is near zero, which is unreachable.
+    feet_slip (-0.25)     measures PELVIS speed gated on foot contact, not
+                          actual foot slip, so on a slope it reads "do not
+                          move while a foot is down".
+
+  What remains: progress_uphill (the objective), termination (-100, which is
+  what makes falling matter), dof_pos_limits, ang_vel_xy, contact_force.
+
+  No term rewards palm contact. If the hands go down it is because that is
+  the only way up.
+  """
+  cfg = default_config()
+  cfg.slope_deg = slope_deg
+
+  scales = cfg.reward_config.scales
+  scales.progress_uphill = 2.0
+
+  for term in (
+      "orientation", "feet_air_time", "feet_phase", "pose", "collision",
+      "joint_deviation_hip", "joint_deviation_knee", "stand_still",
+      "feet_slip", "tracking_lin_vel", "tracking_ang_vel",
+  ):
+    scales[term] = 0.0
+
+  return cfg

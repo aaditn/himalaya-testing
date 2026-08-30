@@ -34,6 +34,10 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
+    ap.add_argument("--climb", type=float, default=None, metavar="DEG",
+                    help="train the climbing task on a rough slope of DEG "
+                         "degrees (strips the reward terms that forbid a "
+                         "hands-down posture; see himalaya/env/climb_config)")
     ap.add_argument("--no-randomization", action="store_true",
                     help="train on fixed physics (the old behaviour). Useful "
                          "only as a control -- see the note by randomize below.")
@@ -45,13 +49,17 @@ def main():
 
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from himalaya.env import Joystick, default_config
+    from himalaya.env import Joystick, climb_config, default_config
     from himalaya.env import randomize as g1_randomize
 
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    task = "rough_terrain" if args.rough else "flat_terrain"
-    cfg = default_config()
+    if args.climb is not None:
+        task = "slope_terrain"
+        cfg = climb_config(args.climb)
+    else:
+        task = "rough_terrain" if args.rough else "flat_terrain"
+        cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
 
