@@ -24,6 +24,8 @@ def main():
     ap.add_argument("--foot-friction", type=float, default=1.90,
                     help="foot microspike friction to render at")
     ap.add_argument("--vx", type=float, default=0.8, help="commanded forward vel")
+    ap.add_argument("--action-scale", type=float, default=0.35,
+                    help="residual action scale used during training")
     ap.add_argument("--vy", type=float, default=0.0)
     ap.add_argument("--wz", type=float, default=0.0, help="commanded yaw rate")
     ap.add_argument("--rough", action="store_true")
@@ -76,6 +78,7 @@ def main():
         cfg.climb.boulders_enabled = not args.no_boulders
         cfg.climb.spike_friction = args.friction
         cfg.climb.foot_spike_friction = args.foot_friction
+        cfg.climb.residual_action_scale = args.action_scale
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
