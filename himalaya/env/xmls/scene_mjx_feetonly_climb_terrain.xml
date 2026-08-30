@@ -10,9 +10,8 @@
   </visual>
 
   <asset>
-    <texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
-    <material name="groundplane" texture="groundplane" texuniform="true"
-      texrepeat="5 2" rgba=".72 .72 .72 1" reflectance=".25"/>
+    <material name="groundplane" rgba=".78 .78 .78 1" reflectance=".18"
+      specular=".08" shininess=".05"/>
     <hfield name="hfield" file="assets/hfield.png" size="8 2.5 .060 1.0"/>
   </asset>
 
