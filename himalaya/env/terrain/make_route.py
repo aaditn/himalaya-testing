@@ -45,7 +45,14 @@ _PEAK_M = 1.00
 # floor the robot walks on, CHANNEL_WALL_W how far the wall takes to rise.
 CHANNEL_DEPTH = 1.10
 CHANNEL_W = 1.0
-CHANNEL_WALL_W = 0.7
+# 0.22, not 0.7. This is how far the wall takes to reach full height, measured
+# from the edge of the flat floor. At 0.7 the wall topped out 1.00 m from the
+# centreline while a palm reaches 0.56 m (0.10 m shoulder offset + 0.46 m arm),
+# so the bracing surface was permanently beyond the hands -- measured, at hand
+# reach the terrain sat 0.25-0.68 m BELOW the shoulder, a V-trench whose walls
+# only turned vertical past where the robot could touch. At 0.22 the wall is at
+# full height by 0.52 m, inside reach.
+CHANNEL_WALL_W = 0.22
 # How much the channel's width and depth vary ALONG its length, as a fraction
 # either side of the nominal. 0.45 means the floor pinches to ~0.55x and opens
 # to ~1.45x of CHANNEL_W as the robot climbs, so one episode contains both the

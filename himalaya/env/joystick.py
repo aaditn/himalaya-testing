@@ -549,6 +549,15 @@ class Joystick(g1_base.G1Env):
   # Body-frame heightmap sample points, metres. 5x5 over +/-0.75 m: wide enough
   # to see both corridor walls at the 0.47-0.84 m floor widths the terrain bank
   # produces, fine enough that a 0.3 m step shows up in one cell.
+  # Shoulder geometry, measured on the knees_bent keyframe.
+  SHOULDER_ABOVE_PELVIS = 0.291
+  # Lateral distances the wall sensor probes, metres. A palm reaches 0.56 m
+  # (0.10 m shoulder offset + 0.46 m arm), so this brackets that with a little
+  # either side: a wall closer than 0.3 m is one the robot is already against.
+  WALL_PROBE_DIST = [0.30, 0.42, 0.54, 0.66, 0.80]
+  # Furthest a palm can reach laterally: 0.10 m shoulder offset + 0.46 m arm.
+  HAND_REACH = 0.56
+
   HEIGHTMAP_OFFSETS = [
       [x, y]
       for x in (-0.75, -0.375, 0.0, 0.375, 0.75)
@@ -724,6 +733,48 @@ class Joystick(g1_base.G1Env):
       return self.terrain_height_at(p3, self.mjx_model.hfield_data) - pel_h
     heightmap = jp.clip(jax.vmap(_h)(world_xy), -1.5, 1.5)
 
+    # WALL SENSOR: what a hand would find, on each side.
+    #
+    # The heightmap above tells the robot where the FLOOR is. It samples at
+    # +/-0.375 and +/-0.75 m laterally, and a braced palm sits at ~0.5 m --
+    # right between two samples -- so the wall a hand would actually touch was
+    # never observed. It also reports one height per column, so there is no
+    # sense of a wall FACE at shoulder level, only ground underfoot.
+    #
+    # This probes the band a palm can reach (shoulder is 0.10 m lateral, the
+    # arm reaches 0.46 m, so 0.56 m out) at several distances and reports, per
+    # side: how far away the first bracing surface is, and how high it stands
+    # relative to the shoulder. That is the information the hands need and the
+    # heightmap cannot carry.
+    sh_h = pel_h + self.SHOULDER_ABOVE_PELVIS
+    def _wall(side_sign):
+      lat = left * side_sign
+      def probe(dist):
+        xy = data.qpos[0:2] + lat * dist
+        p3 = jp.array([xy[0], xy[1], data.qpos[2]])
+        return self.terrain_height_at(p3, self.mjx_model.hfield_data)
+      hs = jax.vmap(probe)(jp.array(self.WALL_PROBE_DIST))
+      # Report the HIGHEST surface in reach, not the first one found.
+      #
+      # Taking the first hit returned the wall's base -- measured, every side
+      # read -0.41 to -0.51 m, which is the ground rising, not a face a palm
+      # can press on. The tallest point in the reachable band is what the hand
+      # actually meets.
+      reachable = jp.array(self.WALL_PROBE_DIST) <= self.HAND_REACH
+      cand = jp.where(reachable, hs, -1e3)
+      idx = jp.argmax(cand)
+      top = cand[idx]
+      # Anything within a downward arm-span of the shoulder is reachable: the
+      # arm can press down-and-out, not only straight sideways. 0.35 m was too
+      # strict and reported "no wall" everywhere, because these corridors are
+      # V-shaped -- at hand reach the surface sits 0.25-0.67 m below the
+      # shoulder and only rises past it further out than the arm can go.
+      found = top > sh_h - 0.70
+      dist = jp.where(found, jp.array(self.WALL_PROBE_DIST)[idx], 1.0)
+      rel_h = jp.where(found, top - sh_h, -1.0)
+      return jp.array([dist, rel_h, found.astype(jp.float32)])
+    wall_sense = jp.concatenate([_wall(1.0), _wall(-1.0)])  # left, right
+
     hand_contact = jp.array([
         data.sensordata[self._mj_model.sensor_adr[sid]] > 0
         for sid in self._hands_floor_found_sensor
@@ -752,6 +803,7 @@ class Joystick(g1_base.G1Env):
         # without routes, so nothing else changes.
         route_local,  # 2
         heightmap,  # 25
+        wall_sense,  # 6: per side, distance / height vs shoulder / found
         hand_contact,  # 2
     ])
 

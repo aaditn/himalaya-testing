@@ -36,6 +36,11 @@ def main():
     ap.add_argument("--slope-deg", type=float, default=None,
                     help="tilt the floor by N degrees (uses the slope_terrain "
                          "scene, which is the rough heightfield on a tilt)")
+    ap.add_argument("--climb-walk", type=float, default=None, metavar="DEG",
+                    help="render the CLIMB-WALK task at DEG degrees. Mirrors "
+                         "train.py --climb-walk: mountain_terrain plus the "
+                         "progress_uphill term. Using --walk-slope for a "
+                         "climb-walk policy renders the wrong reward config.")
     ap.add_argument("--walk-slope", type=float, default=None, metavar="DEG",
                     help="render the WALK-ON-SLOPE task at DEG degrees. Mirrors "
                          "train.py --walk-slope: mountain_terrain scene with the "
@@ -66,14 +71,17 @@ def main():
     from brax.training.agents.ppo import networks as ppo_networks
     from himalaya.env import scene as sc
     from himalaya.env import Joystick, climb_config, default_config
-    from himalaya.env import walk_on_slope_config
+    from himalaya.env import walk_on_slope_config, climb_walk_config
 
     # Same env as training -- himalaya/env/ is the single definition, so a
     # reward or termination change cannot drift between train and record.
     NJMAX, NACONMAX = sc.NJMAX, sc.NACONMAX
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    if args.walk_slope is not None:
+    if args.climb_walk is not None:
+        task = "mountain_terrain"
+        cfg = climb_walk_config(args.climb_walk)
+    elif args.walk_slope is not None:
         task = "mountain_terrain"
         cfg = walk_on_slope_config(args.walk_slope)
     elif args.climb is not None:
