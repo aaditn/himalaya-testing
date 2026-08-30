@@ -137,6 +137,20 @@
       file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_pitch_link.STL"/>
     <mesh name="right_wrist_yaw_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_yaw_link.STL"/>
     <mesh name="right_rubber_hand" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_rubber_hand.STL"/>
+
+    <!-- MODIFIED: The supplied CAD hand is cosmetic only.  Its OBJ has two
+         material regions, exported as separate meshes because MJCF assigns
+         material per geom.  Right-side assets mirror the asymmetric fingers. -->
+    <material name="end_effector_dark" rgba="0.302 0.302 0.302 1"
+      specular="0.75" shininess="0.65" reflectance="0.08"/>
+    <material name="end_effector_blue" rgba="0.6157 0.8118 0.9294 1"
+      specular="0.8" shininess="0.7" reflectance="0.12"/>
+    <mesh name="end_effector_dark_left" file="assets/end_effector_dark.obj" inertia="shell"/>
+    <mesh name="end_effector_blue_left" file="assets/end_effector_blue.obj" inertia="shell"/>
+    <mesh name="end_effector_dark_right" file="assets/end_effector_dark.obj"
+      inertia="shell" scale="-1 1 1"/>
+    <mesh name="end_effector_blue_right" file="assets/end_effector_blue.obj"
+      inertia="shell" scale="-1 1 1"/>
   </asset>
 
   <worldbody>
@@ -336,7 +350,17 @@
                           <joint name="left_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"/>
+                          <!-- MODIFIED: CAD -Y is the tool direction.  Rotate it
+                               onto wrist +X and seat the +Y motor face at the
+                               wrist-link endpoint (x=0.0415 m). -->
+                          <geom name="left_end_effector_dark_visual"
+                            pos="0.1163334 -0.0435139 0.01610515"
+                            quat="0.70710678 0 0 0.70710678" class="visual"
+                            material="end_effector_dark" mesh="end_effector_dark_left"/>
+                          <geom name="left_end_effector_blue_visual"
+                            pos="0.1163334 -0.0435139 0.01610515"
+                            quat="0.70710678 0 0 0.70710678" class="visual"
+                            material="end_effector_blue" mesh="end_effector_blue_left"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="left_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
@@ -390,7 +414,16 @@
                           <joint name="right_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"/>
+                          <!-- MODIFIED: Mirrored cosmetic copy; the stock hand
+                               collision capsule below remains unchanged. -->
+                          <geom name="right_end_effector_dark_visual"
+                            pos="0.1163334 0.0435139 0.01610515"
+                            quat="0.70710678 0 0 0.70710678" class="visual"
+                            material="end_effector_dark" mesh="end_effector_dark_right"/>
+                          <geom name="right_end_effector_blue_visual"
+                            pos="0.1163334 0.0435139 0.01610515"
+                            quat="0.70710678 0 0 0.70710678" class="visual"
+                            material="end_effector_blue" mesh="end_effector_blue_right"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
