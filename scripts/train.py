@@ -55,6 +55,11 @@ def main():
                     help="target fraction of limb load carried by hands")
     ap.add_argument("--speed", type=float, default=0.30,
                     help="target uphill speed in m/s")
+    ap.add_argument("--action-scale", type=float, default=0.35,
+                    help="residual policy action scale around the crawl reference")
+    ap.add_argument("--learning-rate", type=float, default=1e-4)
+    ap.add_argument("--entropy-cost", type=float, default=0.002)
+    ap.add_argument("--updates-per-batch", type=int, default=3)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--restore", default=None,
                     help="Orbax checkpoint or checkpoint directory to resume")
@@ -97,6 +102,7 @@ def main():
         cfg.climb.boulders_enabled = not args.no_boulders
         cfg.climb.target_hand_load_share = args.hand_load
         cfg.climb.target_uphill_speed = args.speed
+        cfg.climb.residual_action_scale = args.action_scale
 
     name = args.name or f"g1_{datetime.now(UTC):%H%M%S}"
     out = (args.runs_dir / name).resolve()
@@ -134,6 +140,17 @@ def main():
         for k, v in metrics.items():
             if k.startswith("eval/episode_reward/"):
                 row[k.split("/")[-1]] = round(float(v), 4)
+        # Select checkpoints for actual ascent, not merely total shaped
+        # reward. Net displacement, command-speed tracking, completed
+        # waypoints, and survival all matter; this avoids exporting a late
+        # policy after PPO has regressed from an earlier useful gait.
+        row["selection_score"] = round(
+            row.get("mountain_progress", 0.0)
+            + row.get("uphill_progress", 0.0)
+            + row.get("waypoint_bonus", 0.0)
+            + 0.1 * row["episode_len"],
+            4,
+        )
         history.append(row)
         (out / "metrics.json").write_text(json.dumps(history, indent=1))
         print(f"  {row['step']:>11,}  reward={row['reward']:8.2f}  "
@@ -159,13 +176,13 @@ def main():
         batch_size=batch_size,
         num_minibatches=num_minibatches,
         unroll_length=20,
-        num_updates_per_batch=4,
+        num_updates_per_batch=args.updates_per_batch,
         discounting=0.97,
-        learning_rate=3e-4,
+        learning_rate=args.learning_rate,
         # Playground's tuned G1 values (config/locomotion_params.py). 1e-2 is
         # the generic locomotion default and leaves too much exploration noise
         # for this robot.
-        entropy_cost=0.005,
+        entropy_cost=args.entropy_cost,
         clipping_epsilon=0.2,
         num_resets_per_eval=1,
         action_repeat=1,
@@ -196,6 +213,22 @@ def main():
     _make_inference_fn, params, _ = train(environment=env, eval_env=eval_env)
 
     from brax.io import model as brax_model
+    from brax.training.agents.ppo import checkpoint as ppo_checkpoint
+
+    candidates = [
+        row for row in history
+        if row["step"] > 0 and (out / "checkpoints" / f"{row['step']:012d}").is_dir()
+    ]
+    if candidates:
+        best = max(candidates, key=lambda row: row["selection_score"])
+        best_checkpoint = out / "checkpoints" / f"{best['step']:012d}"
+        params = ppo_checkpoint.load(best_checkpoint)
+        (out / "best_checkpoint.json").write_text(json.dumps(best, indent=2))
+        print(
+            f"best checkpoint -> {best_checkpoint} "
+            f"(selection={best['selection_score']:.2f})",
+            flush=True,
+        )
     brax_model.save_params(str(out / "policy"), params)
     print(f"\nsaved -> {out/'policy'}   ({time.time()-t0:.0f}s total)")
 

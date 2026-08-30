@@ -121,6 +121,7 @@ def default_config() -> config_dict.ConfigDict:
               hand_slip=0.0,
               knee_clearance=0.0,
               knee_contact=0.0,
+              action_magnitude=0.0,
           ),
           tracking_sigma=0.25,
           max_foot_height=0.15,
@@ -153,6 +154,13 @@ def default_config() -> config_dict.ConfigDict:
           target_uphill_speed=0.30,
           target_hand_load_share=0.28,
           hand_load_sigma=0.025,
+          # Residuals should refine the crawl reference, not overpower it.
+          # The first 5 degree run saturated every action at +/-1 and fell
+          # repeatedly; a smaller residual envelope plus a direct magnitude
+          # cost preserves useful limb exchange while removing that exploit.
+          residual_action_scale=0.35,
+          action_rate_scale=-0.04,
+          action_magnitude_scale=-0.03,
           # MODIFIED: opposed 60% hand duty cycles retain 20% two-hand
           # overlap while leaving enough time for each ball to lift/reach.
           hand_contact_duty_factor=0.60,
@@ -215,6 +223,7 @@ class Joystick(g1_base.G1Env):
       ]
       config.lin_vel_y = [0.0, 0.0]
       config.ang_vel_yaw = [0.0, 0.0]
+      config.action_scale = config.climb.residual_action_scale
       scales = config.reward_config.scales
       scales.tracking_lin_vel = 0.0
       scales.tracking_ang_vel = 0.1
@@ -236,7 +245,8 @@ class Joystick(g1_base.G1Env):
       scales.pose = 0.0
       scales.joint_deviation_hip = 0.0
       scales.joint_deviation_knee = 0.0
-      scales.action_rate = -0.01
+      scales.action_rate = config.climb.action_rate_scale
+      scales.action_magnitude = config.climb.action_magnitude_scale
       scales.energy = -2e-5
       scales.collision = -0.25
       # MODIFIED: forward ascent is the primary objective. Contact rewards are
@@ -1445,6 +1455,7 @@ class Joystick(g1_base.G1Env):
         "hand_slip": jp.sum(jp.square(tangent_vel) * hand_contact),
         "knee_clearance": knee_clearance_reward,
         "knee_contact": jp.mean(knee_contact.astype(data.qpos.dtype)),
+        "action_magnitude": jp.mean(jp.square(action)),
     })
     metrics["climb/uphill_velocity"] = uphill_velocity
     metrics["climb/mountain_progress"] = mountain_progress
@@ -1485,6 +1496,7 @@ class Joystick(g1_base.G1Env):
     metrics["climb/knee_contact_fraction"] = jp.mean(
         knee_contact.astype(data.qpos.dtype)
     )
+    metrics["climb/action_rms"] = jp.sqrt(jp.mean(jp.square(action)))
     return rewards
 
   def _cost_contact_force(self, data: mjx.Data) -> jax.Array:

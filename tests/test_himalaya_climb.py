@@ -118,6 +118,10 @@ class HimalayaClimbTest(unittest.TestCase):
         self.assertLess(
             self.env._config.reward_config.scales.knee_contact, 0.0
         )
+        self.assertLess(
+            self.env._config.reward_config.scales.action_magnitude, 0.0
+        )
+        self.assertEqual(self.env._config.action_scale, 0.35)
         self.assertEqual(self.env._config.climb.target_knee_clearance, 0.05)
         self.assertLess(
             self.env._config.climb.fall_pelvis_clearance,
@@ -329,6 +333,45 @@ class HimalayaClimbTest(unittest.TestCase):
         torso_up_adr = model.sensor_adr[model.sensor("upvector_torso").id]
         torso_up = data.sensordata[torso_up_adr : torso_up_adr + 3]
         self.assertGreater(torso_up @ env._slope_tangent, 0.9)
+
+    def test_45_degree_curriculum_uses_small_grade_steps(self):
+        stages = json.loads(
+            Path("configs/curriculum_45deg.json").read_text(encoding="utf-8")
+        )["stages"]
+        slopes = [stage["slope_degrees"] for stage in stages]
+        self.assertEqual(slopes[0], 5)
+        self.assertEqual(slopes[-1], 45)
+        self.assertLessEqual(max(np.diff(slopes)), 8)
+        self.assertFalse(stages[-2]["boulders_enabled"])
+        self.assertTrue(stages[-1]["boulders_enabled"])
+        self.assertTrue(all(stage["eval_envs"] <= 32 for stage in stages))
+
+        config = default_config()
+        config.impl = "jax"
+        config.climb.slope_degrees = 45
+        config.climb.roughness_m = stages[-2]["roughness_m"]
+        config.climb.boulders_enabled = False
+        env = Joystick(task="climb_terrain", config=config)
+        model = env.mj_model
+        data = mujoco.MjData(model)
+        mujoco.mj_resetDataKeyframe(
+            model, data, model.keyframe("knees_bent").id
+        )
+        mujoco.mj_forward(model, data)
+        contacts = {
+            model.geom(item.geom[0]).name
+            if model.geom(item.geom[1]).name == "floor"
+            else model.geom(item.geom[1]).name
+            for item in data.contact
+            if "floor" in {
+                model.geom(item.geom[0]).name,
+                model.geom(item.geom[1]).name,
+            }
+        }
+        self.assertTrue({
+            "left_foot", "right_foot",
+            "left_hand_collision", "right_hand_collision",
+        }.issubset(contacts))
 
     def test_crawl_reset_reaches_hand_contact(self):
         model = self.env.mj_model
