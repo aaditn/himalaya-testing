@@ -18,17 +18,12 @@ print(f"JAX devices: {jax.devices()}", flush=True)
 PY
 
 mkdir -p "${RUNS_MOUNT}"
-if [[ ! -e "${ROOT}/runs" ]]; then
-  ln -s "${RUNS_MOUNT}" "${ROOT}/runs"
-elif [[ ! -L "${ROOT}/runs" ]]; then
-  echo "${ROOT}/runs exists and is not the persistent runs mount" >&2
-  exit 2
-fi
 
 cd "${ROOT}"
 exec python scripts/train.py \
   --climb \
   --name "${RUN_NAME}" \
+  --runs-dir "${RUNS_MOUNT}" \
   --envs "${TRAIN_ENVS}" \
   --timesteps "${TRAIN_STEPS}" \
   --slope 5 \

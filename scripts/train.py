@@ -32,6 +32,12 @@ def main():
     ap.add_argument("--timesteps", type=int, default=200_000_000)
     ap.add_argument("--envs", type=int, default=8192)
     ap.add_argument("--name", default=None)
+    ap.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=Path("runs"),
+        help="root directory for checkpoints, metrics, and the final policy",
+    )
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
     ap.add_argument("--climb", action="store_true",
@@ -93,7 +99,7 @@ def main():
         cfg.climb.target_uphill_speed = args.speed
 
     name = args.name or f"g1_{datetime.now(UTC):%H%M%S}"
-    out = (Path("runs") / name).resolve()
+    out = (args.runs_dir / name).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
     env = Joystick(task=task, config=cfg)
