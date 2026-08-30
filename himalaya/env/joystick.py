@@ -714,6 +714,7 @@ class Joystick(g1_base.G1Env):
     metrics["climb/hand_slip_speed"] = jp.zeros(())
     metrics["climb/knee_clearance_min"] = jp.zeros(())
     metrics["climb/knee_contact_fraction"] = jp.zeros(())
+    metrics["climb/action_rms"] = jp.zeros(())
 
     contact = jp.array([
         data.sensordata[self._mj_model.sensor_adr[sensorid]] > 0
