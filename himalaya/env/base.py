@@ -36,6 +36,7 @@ import numpy as np
 
 from mujoco_playground._src import mjx_env
 from himalaya.env import g1_constants as consts
+from himalaya.env import scene as scene_mod
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -75,14 +76,16 @@ class G1Env(mjx_env.MjxEnv):
     # and the robot simply walks on level ground while every log says 45 deg.
     self._slope_rad = float(np.deg2rad(self._config.slope_deg))
     if self._slope_rad != 0.0:
-        half = 0.5 * self._slope_rad
-        quat = f'quat="{np.cos(half)} 0 {np.sin(half)} 0"'
         if 'quat="1 0 0 0"' not in xml_text:
             raise ValueError(
                 f"{xml_path} has no floor quat placeholder to substitute; "
                 "slope_deg requires a scene with quat=\"1 0 0 0\" on its floor geom"
             )
-        xml_text = xml_text.replace('quat="1 0 0 0"', quat, 1)
+        # scene.py owns the substitution so the local viewer tilts the floor
+        # exactly the way training does.
+        q = scene_mod.slope_quat(self._slope_rad)
+        xml_text = xml_text.replace(
+            'quat="1 0 0 0"', f'quat="{q[0]} 0 {q[2]} 0"', 1)
 
     self._mj_model = mujoco.MjModel.from_xml_string(
         xml_text, assets=self._model_assets
@@ -100,15 +103,11 @@ class G1Env(mjx_env.MjxEnv):
     # from the same angle as the quat substituted above, so they cannot drift.
     # One slope per run: the normal is a compile-time constant, free under jit,
     # and every metric in a run is attributable to one angle.
-    self._slope_normal = np.array(
-        [np.sin(self._slope_rad), 0.0, np.cos(self._slope_rad)]
-    )
+    self._slope_normal = scene_mod.slope_normal(self._slope_rad)
     # Rotating about +Y drops the surface along +X, so up-gradient is -X.
     # (Verified: uphill.z must be POSITIVE -- a downhill vector here would make
     # progress_uphill pay the policy for sliding to the bottom.)
-    self._uphill = np.array(
-        [-np.cos(self._slope_rad), 0.0, np.sin(self._slope_rad)]
-    )
+    self._uphill = scene_mod.uphill(self._slope_rad)
 
     # Highest point of the terrain above its own mean plane. reset() lifts the
     # spawn by this so the robot starts above the rock rather than inside it.
@@ -141,9 +140,7 @@ class G1Env(mjx_env.MjxEnv):
     self._lane = None
     if self._mj_model.nhfield > 0:
       import numpy as _np
-      cpath = consts.ROOT_PATH / "xmls" / "assets" / "mountain_centre.npy"
-      if cpath.exists():
-        self._lane = _np.load(cpath.as_posix())
+      self._lane = scene_mod.lane_mouths()
 
     # World "up". Height gain along this is the climbing objective -- see
     # _reward_progress_uphill. Kept here so the reward needs to know nothing

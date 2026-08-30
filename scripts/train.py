@@ -16,15 +16,22 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import sys
+
 import jax
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# numpy-only, so this costs nothing at import time and keeps the physics
+# limits, network shape and contact-pair layout in a single place.
+from himalaya.env import scene as sc
 
 # Playground ships njmax=90 (max simultaneous constraints), which is too small
 # for the G1: training logged 2,580 "nefc overflow - please increase njmax"
 # warnings on ordinary ground. When the solver runs out of constraint slots it
 # DROPS contacts, and a dropped foot contact means nothing holds the robot up
 # that step -- the likely source of floor penetration.
-NJMAX = 160
-NACONMAX = 131072
+NJMAX = sc.NJMAX
+NACONMAX = sc.NACONMAX
 
 
 def main():
@@ -136,8 +143,8 @@ def main():
         reward_scaling=1.0,
         network_factory=functools.partial(
             ppo_networks.make_ppo_networks,
-            policy_hidden_layer_sizes=(512, 256, 128),
-            value_hidden_layer_sizes=(512, 256, 128),
+            policy_hidden_layer_sizes=sc.HIDDEN_LAYERS,
+            value_hidden_layer_sizes=sc.HIDDEN_LAYERS,
             # The critic reads privileged_state (216 dims: contact forces,
             # true velocities, friction) while the actor reads state (103).
             # Without these keys brax defaults both to "state", so the value

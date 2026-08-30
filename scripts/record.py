@@ -60,11 +60,12 @@ def main():
     from brax.io import model as brax_model
     from brax.training.acme import running_statistics
     from brax.training.agents.ppo import networks as ppo_networks
+    from himalaya.env import scene as sc
     from himalaya.env import Joystick, climb_config, default_config
 
     # Same env as training -- himalaya/env/ is the single definition, so a
     # reward or termination change cannot drift between train and record.
-    NJMAX, NACONMAX = 160, 131072
+    NJMAX, NACONMAX = sc.NJMAX, sc.NACONMAX
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
     if args.climb is not None:
@@ -97,8 +98,8 @@ def main():
     # this line, 905 with it.
     net = ppo_networks.make_ppo_networks(
         env.observation_size, env.action_size,
-        policy_hidden_layer_sizes=(512, 256, 128),
-        value_hidden_layer_sizes=(512, 256, 128),
+        policy_hidden_layer_sizes=sc.HIDDEN_LAYERS,
+        value_hidden_layer_sizes=sc.HIDDEN_LAYERS,
         policy_obs_key="state",
         value_obs_key="privileged_state",
         preprocess_observations_fn=running_statistics.normalize,
@@ -117,7 +118,7 @@ def main():
     # this slice further. With [0:2] the hands rendered at the XML default while
     # the feet used the swept value.
     env._mjx_model = env._mjx_model.tree_replace(
-        {"pair_friction": env._mjx_model.pair_friction.at[0:4, 0:2].set(args.friction)}
+        {"pair_friction": env._mjx_model.pair_friction.at[sc.FLOOR_PAIRS, 0:2].set(args.friction)}
     )
 
     reset = jax.jit(env.reset)
@@ -166,7 +167,7 @@ def main():
 
     # Match the rendered model to the simulated one.
     mj_model = env.mj_model
-    mj_model.pair_friction[0:4, 0:2] = args.friction
+    mj_model.pair_friction[sc.FLOOR_PAIRS, 0:2] = args.friction
 
     if args.camera in ("side", "front", "chase"):
         # Free camera with world up-axis. The only camera in the model is

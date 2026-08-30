@@ -37,6 +37,7 @@ from himalaya.env import gait
 from mujoco_playground._src import mjx_env
 from himalaya.env import base as g1_base
 from himalaya.env import g1_constants as consts
+from himalaya.env import scene as scene_mod
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -318,12 +319,21 @@ class Joystick(g1_base.G1Env):
       lanes = jp.array(self._lane)
       pick = jax.random.randint(key, (), 0, lanes.shape[0])
       rng, key = jax.random.split(rng)
+      # +5 m lateral. Clamped to the hfield, which spans [-6, +6]: lane 3's
+      # mouth is at y=+3.88 and would land at +8.88, off the map.
       qpos = qpos.at[1].set(
-          lanes[pick] + jax.random.uniform(key, minval=-0.35, maxval=0.35)
+          jp.clip(
+              lanes[pick] + scene_mod.SPAWN_Y_SHIFT
+              + jax.random.uniform(key,
+                                   minval=-scene_mod.SPAWN_Y_JITTER,
+                                   maxval=scene_mod.SPAWN_Y_JITTER),
+              -scene_mod.SPAWN_Y_CLAMP, scene_mod.SPAWN_Y_CLAMP)
       )
       # Lower third of the slope, so there is climb left above it.
+      # 2 m lower than before (was 2.0-5.0): +x is uphill on this tilted floor.
       rng, key = jax.random.split(rng)
-      qpos = qpos.at[0].set(jax.random.uniform(key, minval=2.0, maxval=5.0))
+      qpos = qpos.at[0].set(jax.random.uniform(
+          key, minval=scene_mod.SPAWN_X[0], maxval=scene_mod.SPAWN_X[1]))
 
     rng, key = jax.random.split(rng)
     yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
@@ -380,37 +390,42 @@ class Joystick(g1_base.G1Env):
         # slope by a few centimetres and is left alone.
         if self._platform_x is None:
             n = jp.array(self._slope_normal)
-            # Sample under the PELVIS and under each foot, and lift by the
-            # largest. Sampling at the pelvis alone left 10 of 120 feet buried
-            # by up to 0.13 m, because a foot can stand over a rock taller than
-            # the ground beneath the torso -- and a foot that starts inside the
-            # terrain gets an interpenetration impulse on step one, which is
-            # the same failed-from-reset problem in a smaller form.
+            # Lift the body so the LOWEST part of it clears the rock.
             #
-            # The feet are roughly +/-0.10 m either side of the pelvis in the
-            # slope's lateral direction (local y, which the tilt leaves along
-            # world y) and both sit ~0.75 m down the normal. Probing those two
-            # offsets is enough; exact foot placement varies with the joint
-            # jitter applied above, and the 0.05 m clearance covers the rest.
-            probe = qpos[0:3] - self._init_q[2] * n
-            relief = jp.maximum(
-                self.terrain_height_at(qpos[0:3]),
-                jp.maximum(
-                    self.terrain_height_at(probe + jp.array([0.0, 0.10, 0.0])),
-                    self.terrain_height_at(probe + jp.array([0.0, -0.10, 0.0])),
-                ),
-            )
+            # terrain_height_at returns relief above the mean plane for a given
+            # x,y column -- the height you sample FROM does not change the
+            # answer. So probing "under the feet" by offsetting down the normal
+            # read the same columns as the pelvis and the three-way maximum was
+            # over three nearly identical numbers, applied to a pelvis already
+            # standing 0.755 m up. Measured, that started every episode with
+            # 0.82 m of clearance instead of the intended 0.05.
+            #
+            # What matters is the relief under the FOOTPRINT: the columns the
+            # body actually spans. Sample a small grid around the spawn x,y and
+            # take the highest, which is the rock the lowest geom would hit.
+            # Grid half-width and clearance live in scene.py. The grid takes
+            # the HIGHEST rock within the span, so a wide span lifts the robot
+            # onto a boulder it is standing beside rather than on; 0.25 m
+            # overshot the measured 0.17-0.22 m touchdown height badly.
+            offs = jp.array(scene_mod.probe_offsets())
+            relief = jp.max(jax.vmap(
+                lambda o: self.terrain_height_at(qpos[0:3] + o))(offs))
             qpos = qpos.at[0:3].add(relief * n)
-            # Small clearance so the feet start just above the rock rather than
-            # exactly on it: bilinear sampling smooths sharp ledges, so the true
-            # surface under a foot can sit slightly above the interpolated value.
-            qpos = qpos.at[2].add(0.05)
+            qpos = qpos.at[2].add(scene_mod.SPAWN_CLEARANCE)
 
     # qpos[7:]=*U(0.5, 1.5)
-    rng, key = jax.random.split(rng)
-    qpos = qpos.at[7:].set(
-        qpos[7:] * jax.random.uniform(key, (29,), minval=0.5, maxval=1.5)
-    )
+    #
+    # Inherited from flat-ground walking, where a crumpled start is harmless
+    # jitter. Note it is MULTIPLICATIVE: it cannot move a joint that sits at
+    # zero, and it swings the large-angle joints hardest (the knee at 0.669 rad
+    # spans 0.33-1.00). step() then commands _default_pose, so the robot spawns
+    # in one configuration and is immediately told to snap to another.
+    # _reset_jitter_off exists so spawn_check.py can isolate that effect.
+    if not getattr(self, "_reset_jitter_off", False):
+      rng, key = jax.random.split(rng)
+      qpos = qpos.at[7:].set(
+          qpos[7:] * jax.random.uniform(key, (29,), minval=0.5, maxval=1.5)
+      )
 
     # d(xyzrpy)=U(-0.5, 0.5)
     rng, key = jax.random.split(rng)

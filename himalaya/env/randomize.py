@@ -23,6 +23,7 @@
 # does not survive jax.jit tracing -- it fails silently during training.
 # ==============================================================================
 """Utilities for randomization."""
+from himalaya.env import scene as sc
 import jax
 from mujoco import mjx
 
@@ -46,7 +47,7 @@ def domain_randomize(model: mjx.Model, rng: jax.Array):
     # 0:4 covers both feet and both hands against the floor. MuJoCo SORTS
     # <pair> elements, so these indices do not follow XML order -- verify
     # against mj_id2name after any pair change.
-    pair_friction = model.pair_friction.at[0:4, 0:2].set(friction)
+    pair_friction = model.pair_friction.at[sc.FLOOR_PAIRS, 0:2].set(friction)
 
     # Scale static friction: *U(0.9, 1.1).
     rng, key = jax.random.split(rng)
