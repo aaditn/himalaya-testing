@@ -289,6 +289,19 @@ class Joystick(g1_base.G1Env):
     jitter = self._config.spawn_jitter
     dxy = jax.random.uniform(key, (2,), minval=-jitter, maxval=jitter)
     qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
+
+    # MODIFIED: on the climbing task, start ON the flat platform rather than
+    # scattered over the slope. Spawning mid-slope meant the robot was already
+    # sliding before its first action, so it never had a stable state to act
+    # from. x is placed across the platform's width; y keeps the jitter above,
+    # so it still sees different rock each episode and cannot memorise one
+    # line up the hill.
+    if self._platform_x is not None:
+      rng, key = jax.random.split(rng)
+      px = jax.random.uniform(
+          key, minval=self._platform_x + 0.4, maxval=self._platform_x + 3.0
+      )
+      qpos = qpos.at[0].set(px)
     rng, key = jax.random.split(rng)
     yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
     quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
@@ -309,25 +322,36 @@ class Joystick(g1_base.G1Env):
     # on a 45 degree slope the robot is already 45 degrees off the surface
     # normal, i.e. mid-fall before it has acted.
     if self._slope_rad != 0.0:
-        surface_z = -qpos[0] * jp.tan(self._slope_rad)
+        # On the platform the ground is LEVEL at a fixed height, not the
+        # tilted surface -- using the slope formula here would drop the robot
+        # from metres up, or bury it.
+        if self._platform_x is not None:
+            surface_z = self._platform_top
+        else:
+            surface_z = -qpos[0] * jp.tan(self._slope_rad)
         qpos = qpos.at[2].set(qpos[2] + surface_z)
-        tilt = math.axis_angle_to_quat(
-            jp.array([0.0, 1.0, 0.0]), jp.array([self._slope_rad])
-        )
-        qpos = qpos.at[3:7].set(math.quat_mul(tilt, qpos[3:7]))
+        if self._platform_x is None:
+            # Align the body to the slope. On the platform the ground is
+            # level, so the robot should stand upright instead.
+            tilt = math.axis_angle_to_quat(
+                jp.array([0.0, 1.0, 0.0]), jp.array([self._slope_rad])
+            )
+            qpos = qpos.at[3:7].set(math.quat_mul(tilt, qpos[3:7]))
         # Rotating the body about the pelvis swings the feet downward, so the
         # pelvis has to rise by the standing height times (1 - cos(slope)) to
         # keep the feet on the surface rather than buried in it. Measured
         # without this: feet sit 0.196 m under a 45 degree slope.
-        qpos = qpos.at[2].add(
-            self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
-        )
+        if self._platform_x is None:
+            qpos = qpos.at[2].add(
+                self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
+            )
         # Clear the terrain's own relief. Spawning against the mean plane puts
         # the robot inside any rock above it; on the 2.0 m mountain terrain
         # that was every foot, ~1.55 m under. Starting at the peak costs a
         # short drop onto the surface, which the policy handles, and is far
         # cheaper than an episode that begins underground.
-        qpos = qpos.at[2].add(self._terrain_peak)
+        if self._platform_x is None:
+            qpos = qpos.at[2].add(self._terrain_peak)
 
     # qpos[7:]=*U(0.5, 1.5)
     rng, key = jax.random.split(rng)
@@ -654,7 +678,7 @@ class Joystick(g1_base.G1Env):
     return {
         # The climbing objective.
         "progress_uphill": self._reward_progress_uphill(
-            self.get_global_linvel(data, "torso")
+            self.get_global_linvel(data, "torso"), data.qpos[0]
         ),
         # Tracking rewards.
         "tracking_lin_vel": self._reward_tracking_lin_vel(
@@ -771,7 +795,8 @@ class Joystick(g1_base.G1Env):
     out_of_limits += jp.clip(qpos - self._soft_uppers, 0.0, None)
     return jp.sum(out_of_limits)
 
-  def _reward_progress_uphill(self, global_linvel: jax.Array) -> jax.Array:
+  def _reward_progress_uphill(self, global_linvel: jax.Array,
+                              data_x: jax.Array) -> jax.Array:
     """Speed up the slope, clipped at a target pace.
 
     Deliberately says nothing about posture, limb count, or gait -- if
@@ -785,7 +810,16 @@ class Joystick(g1_base.G1Env):
     if self._slope_rad == 0.0:
       return jp.zeros(())
     speed = jp.dot(global_linvel, jp.array(self._uphill))
-    return jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
+    reward = jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
+    # Nothing on the starting platform counts. It exists so the robot begins
+    # on stable ground rather than mid-slope already sliding -- it is a
+    # starting position, not part of the task. Paying for movement there
+    # would just be a flat-ground walking reward the policy could farm
+    # instead of climbing.
+    if self._platform_x is not None:
+      on_platform = data_x > self._platform_x
+      reward = jp.where(on_platform, 0.0, reward)
+    return reward
 
   def _reward_tracking_lin_vel(
       self,

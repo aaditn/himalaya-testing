@@ -426,6 +426,16 @@
          foot-floor pairs must stay at indices 0 and 1. -->
     <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
     <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <!-- The starting platform needs its own pairs for the same reason the
+         floor does: the g1 class sets contype=0/conaffinity=0, so contact
+         exists only where a <pair> says so. Without these the robot falls
+         straight through the platform it is supposed to stand on.
+         Appended after the four floor pairs so randomize.py's
+         pair_friction[0:4] slice still lands on feet and hands. -->
+    <pair name="left_foot_platform" geom1="left_foot" geom2="start_platform" condim="3" friction="0.6 0.6"/>
+    <pair name="right_foot_platform" geom1="right_foot" geom2="start_platform" condim="3" friction="0.6 0.6"/>
+    <pair name="left_hand_platform" geom1="left_hand_collision" geom2="start_platform" condim="3" friction="0.6 0.6"/>
+    <pair name="right_hand_platform" geom1="right_hand_collision" geom2="start_platform" condim="3" friction="0.6 0.6"/>
     <!-- <pair name="left_foot_right_shin" geom1="left_foot" geom2="right_shin" condim="1"/> -->
     <!-- <pair name="right_foot_left_shin" geom1="right_foot" geom2="left_shin" condim="1"/> -->
     <!-- <pair name="left_shin_right_shin" geom1="left_shin" geom2="right_shin" condim="1"/> -->

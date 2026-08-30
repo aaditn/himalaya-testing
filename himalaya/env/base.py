@@ -114,6 +114,21 @@ class G1Env(mjx_env.MjxEnv):
     # A smooth-plane correction is not enough once the heightfield carries real
     # relief: measured on the 2.0 m mountain terrain, every foot spawned an
     # average of 1.55 m underground.
+    # Uphill edge of the starting platform, in world x. Read from the geom so
+    # it cannot drift from the XML. None when the scene has no platform.
+    self._platform_x = None
+    self._platform_top = 0.0
+    try:
+      pid = self._mj_model.geom("start_platform").id
+      self._platform_x = float(
+          self._mj_model.geom_pos[pid][0] - self._mj_model.geom_size[pid][0]
+      )
+      self._platform_top = float(
+          self._mj_model.geom_pos[pid][2] + self._mj_model.geom_size[pid][2]
+      )
+    except KeyError:
+      pass
+
     self._terrain_peak = 0.0
     if self._mj_model.nhfield > 0:
       nr = int(self._mj_model.hfield_nrow[0])

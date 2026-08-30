@@ -40,6 +40,19 @@
   </asset>
 
   <worldbody>
+    <!-- Flat staging platform at the downhill end of the slope. The robot
+         spawns here, on level ground, instead of mid-slope where it is
+         already sliding before it can act. It walks off the lip onto the
+         climb under its own power.
+
+         Reward is zeroed while the robot is on the platform (see
+         _reward_progress_uphill), so nothing here can be farmed -- the
+         platform is a starting position, not part of the task.
+
+         Sized and placed in the FLOOR's rotated frame, so it sits flush with
+         the slope surface rather than at some world height. -->
+    <geom name="start_platform" type="box" size="1.8 6 0.5"
+          pos="7.3 0 -4.7" rgba="0.45 0.55 0.75 1" condim="3" friction="0.6 0.6"/>
     <!-- quat is overwritten at load time from --slope-deg; identity here means flat. -->
     <geom name="floor" type="hfield" hfield="hfield" material="groundplane" quat="1 0 0 0"/>
   </worldbody>
