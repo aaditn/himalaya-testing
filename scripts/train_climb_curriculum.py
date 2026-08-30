@@ -38,6 +38,7 @@ def main() -> None:
             "--slope", str(stage["slope_degrees"]),
             "--roughness", str(stage["roughness_m"]),
             "--spike-friction", str(stage["spike_friction"]),
+            "--foot-friction", str(2.0 * stage["spike_friction"]),
             "--hand-load", str(stage["target_hand_load_share"]),
             "--speed", str(stage["target_uphill_speed"]),
             "--seed", str(args.seed + index),

@@ -167,9 +167,11 @@ The curriculum in `configs/curriculum.json` first learns support exchange on a
 5° grade with 5 mm relief and no boulders, then transfers to a smooth 12°
 grade, and only then introduces 6 cm relief and the rocks. It subsequently
 progresses through 20°, 28°, 35°, and a terminal 42° stage while increasing
-terrain relief to 15 cm and desired hand loading to 40%. The terminal angle is
-just inside the nominal friction limit: tan(42°) is about 0.90 versus 0.95
-microspike friction. Ten fixed 10-inch-diameter (0.254 m) boulders are
+terrain relief to 15 cm and desired hand loading to 40%. Hand microspikes retain
+0.95 tangential friction while the foot microspikes use 1.90, exactly twice the
+hand coefficient. At the terminal grade tan(42°) is about 0.90, so hands remain
+near the nominal friction limit while stance feet have additional propulsion
+margin. Ten fixed 10-inch-diameter (0.254 m) boulders are
 distributed across every rocky stage. Each boulder has explicit collision
 pairs with both palms and both feet; it is not a visual-only prop. Boulder
 centers are placed one compiled radius above the sampled ramp, so changing rock
@@ -195,11 +197,18 @@ python scripts/train_climb_curriculum.py --envs 8192 --prefix g1_climb
 ```
 
 Microspikes are represented at contact-patch scale on the spherical hand
-end-effectors and feet, with isotropic tangential friction sampled uniformly
-from 0.9 to 1.0, torsional coefficient 0.08, rolling coefficient 0.03, and
-compliant six-dimensional contacts.
+end-effectors and feet. During domain randomization, hand tangential friction is
+sampled uniformly from 0.9 to 1.0 and foot friction is exactly twice the sampled
+hand value (1.8 to 2.0). Contacts retain torsional coefficient 0.08, rolling
+coefficient 0.03, and compliant six-dimensional constraints.
 This is useful for policy discovery and sensitivity analysis; it does not model
 individual teeth biting, clogging, breaking substrate, or pulling out.
+
+On the 5° fixed-physics bootstrap, changing only the foot coefficient from 0.95
+to 1.90 improved the existing policy from 7.1 cm net progress with one fall to
+9.7 cm with no falls over six seconds. A further 40,960-step continuation reached
+16.4 cm net progress with no falls, 0.028 m/s mean uphill velocity, and five
+qualifying foot-step events in the same deterministic rollout.
 
 Diagnostics showed why the early policies did not step: they already moved
 joints and lifted feet, but the stock foot-phase reward used absolute world Z

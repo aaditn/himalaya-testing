@@ -20,7 +20,9 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--friction", type=float, default=0.95,
-                    help="floor friction to render at")
+                    help="hand microspike friction to render at")
+    ap.add_argument("--foot-friction", type=float, default=1.90,
+                    help="foot microspike friction to render at")
     ap.add_argument("--vx", type=float, default=0.8, help="commanded forward vel")
     ap.add_argument("--vy", type=float, default=0.0)
     ap.add_argument("--wz", type=float, default=0.0, help="commanded yaw rate")
@@ -72,6 +74,8 @@ def main():
         cfg.climb.slope_degrees = args.slope
         cfg.climb.roughness_m = args.roughness
         cfg.climb.boulders_enabled = not args.no_boulders
+        cfg.climb.spike_friction = args.friction
+        cfg.climb.foot_spike_friction = args.foot_friction
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
@@ -98,10 +102,28 @@ def main():
     # Setting it on env.mj_model afterwards only changes what is drawn, so the
     # clip would show a "slippery" floor the physics never used.
     floor_pair_count = env.mj_model.npair - 3 if args.climb else 2
+    foot_pair_ids = [
+        pair_id for pair_id in range(floor_pair_count)
+        if env.mj_model.pair(pair_id).name.startswith(
+            ("left_foot_", "right_foot_")
+        )
+    ]
+    hand_pair_ids = [
+        pair_id for pair_id in range(floor_pair_count)
+        if env.mj_model.pair(pair_id).name.startswith(
+            ("left_hand_", "right_hand_")
+        )
+    ]
+    pair_friction = env._mjx_model.pair_friction
+    pair_friction = pair_friction.at[jp.array(foot_pair_ids), 0:2].set(
+        args.foot_friction
+    )
+    if hand_pair_ids:
+        pair_friction = pair_friction.at[jp.array(hand_pair_ids), 0:2].set(
+            args.friction
+        )
     env._mjx_model = env._mjx_model.tree_replace({
-        "pair_friction": env._mjx_model.pair_friction.at[
-            0:floor_pair_count, 0:2
-        ].set(args.friction)
+        "pair_friction": pair_friction
     })
 
     reset = jax.jit(env.reset)
@@ -131,7 +153,9 @@ def main():
 
     # Match the rendered model to the simulated one.
     mj_model = env.mj_model
-    mj_model.pair_friction[0:floor_pair_count, 0:2] = args.friction
+    mj_model.pair_friction[foot_pair_ids, 0:2] = args.foot_friction
+    if hand_pair_ids:
+        mj_model.pair_friction[hand_pair_ids, 0:2] = args.friction
 
     if args.camera in ("side", "front", "chase"):
         # Free camera with world up-axis. The only camera in the model is
@@ -155,7 +179,10 @@ def main():
     mediapy.write_video(str(out), frames, fps=1.0 / env.dt)
 
     print(f"wrote {out}  ({len(frames)} frames, {args.seconds}s)")
-    print(f"  friction={args.friction}  command=({args.vx},{args.vy},{args.wz})")
+    print(
+        f"  hand_friction={args.friction} foot_friction={args.foot_friction}  "
+        f"command=({args.vx},{args.vy},{args.wz})"
+    )
     print(f"  falls during clip: {slips}")
     if args.climb:
         import numpy as np

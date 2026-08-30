@@ -130,13 +130,27 @@ class HimalayaClimbTest(unittest.TestCase):
         for name in (
             "left_foot_floor",
             "right_foot_floor",
+            "left_foot_boulder_00",
+            "right_foot_boulder_00",
+        ):
+            pair_id = model.pair(name).id
+            self.assertEqual(model.pair_dim[pair_id], 6)
+            self.assertAlmostEqual(model.pair_friction[pair_id, 0], 1.90)
+            self.assertAlmostEqual(model.pair_friction[pair_id, 1], 1.90)
+        for name in (
             "left_hand_floor",
             "right_hand_floor",
+            "left_hand_boulder_00",
+            "right_hand_boulder_00",
         ):
             pair_id = model.pair(name).id
             self.assertEqual(model.pair_dim[pair_id], 6)
             self.assertAlmostEqual(model.pair_friction[pair_id, 0], 0.95)
             self.assertAlmostEqual(model.pair_friction[pair_id, 1], 0.95)
+        self.assertAlmostEqual(
+            self.env._config.climb.foot_spike_friction,
+            2.0 * self.env._config.climb.spike_friction,
+        )
         boulders = [
             model.geom(f"boulder_{index:02d}").id for index in range(10)
         ]

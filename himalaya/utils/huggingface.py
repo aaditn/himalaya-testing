@@ -96,7 +96,8 @@ All three wrist axes are centered at zero and limited to +/-0.08 rad, with a
 position gain of 20 and +/-25 Nm actuator limits. This preserves slight
 compliance while preventing the wrist from folding under support load.
 
-Both tangential microspike coefficients are randomized together in [0.9, 1.0].
+Hand tangential microspike friction is randomized in [0.9, 1.0], and foot
+friction is exactly twice the sampled hand value in [1.8, 2.0].
 Rocky curriculum stages use 6-15 cm height-field relief and ten physical
 10-inch-diameter boulders with explicit palm/foot contacts. Boulder placement
 uses each compiled radius, and the four-point reset is rigidly aligned with the

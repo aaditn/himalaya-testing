@@ -135,7 +135,13 @@ class G1Env(mjx_env.MjxEnv):
       ]
       for pair_id in spike_pair_ids:
         self._mj_model.pair_dim[pair_id] = 6
-        friction = float(self._config.climb.spike_friction)
+        pair_name = self._mj_model.pair(pair_id).name
+        is_foot_pair = pair_name.startswith(("left_foot_", "right_foot_"))
+        friction = float(
+            self._config.climb.foot_spike_friction
+            if is_foot_pair
+            else self._config.climb.spike_friction
+        )
         self._mj_model.pair_friction[pair_id] = [
             friction, friction, .08, .03, .03
         ]

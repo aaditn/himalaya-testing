@@ -142,7 +142,10 @@ def default_config() -> config_dict.ConfigDict:
           enabled=False,
           slope_degrees=12.0,
           roughness_m=0.060,
+          # Hand microspikes retain the measured baseline; foot microspikes
+          # use twice the tangential coefficient to improve stance propulsion.
           spike_friction=0.95,
+          foot_spike_friction=1.90,
           target_uphill_speed=0.30,
           target_hand_load_share=0.28,
           hand_load_sigma=0.025,

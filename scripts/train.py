@@ -41,6 +41,8 @@ def main():
     ap.add_argument("--roughness", type=float, default=0.060,
                     help="height-field relief in metres")
     ap.add_argument("--spike-friction", type=float, default=0.95)
+    ap.add_argument("--foot-friction", type=float, default=1.90,
+                    help="foot microspike friction; defaults to twice the hands")
     ap.add_argument("--no-boulders", action="store_true",
                     help="move boulders below the terrain for crawl bootstrap")
     ap.add_argument("--hand-load", type=float, default=0.28,
@@ -85,6 +87,7 @@ def main():
         cfg.climb.slope_degrees = args.slope
         cfg.climb.roughness_m = args.roughness
         cfg.climb.spike_friction = args.spike_friction
+        cfg.climb.foot_spike_friction = args.foot_friction
         cfg.climb.boulders_enabled = not args.no_boulders
         cfg.climb.target_hand_load_share = args.hand_load
         cfg.climb.target_uphill_speed = args.speed
