@@ -59,8 +59,32 @@ class G1Env(mjx_env.MjxEnv):
     super().__init__(config, config_overrides)
 
     self._model_assets = get_assets()
+    xml_text = epath.Path(xml_path).read_text()
+
+    # MODIFIED: tilt the floor for the climbing task, BEFORE compiling.
+    #
+    # This has to be a text substitution rather than a post-load write to
+    # mj_model.geom_quat. MuJoCo bakes a worldbody geom's orientation into
+    # geom_xmat at compile time, so assigning geom_quat afterwards updates the
+    # stored field and nothing else: geom_xmat -- which is what the collider
+    # actually reads -- stays identity. Measured, 45 deg about +Y:
+    #     XML-baked     geom_xmat normal [0.707 0 0.707]   (a real slope)
+    #     post-compile  geom_xmat normal [0     0 1    ]   (flat)
+    # The failure is silent. Contact sensors still fire, episodes still run,
+    # and the robot simply walks on level ground while every log says 45 deg.
+    self._slope_rad = float(np.deg2rad(self._config.slope_deg))
+    if self._slope_rad != 0.0:
+        half = 0.5 * self._slope_rad
+        quat = f'quat="{np.cos(half)} 0 {np.sin(half)} 0"'
+        if 'quat="1 0 0 0"' not in xml_text:
+            raise ValueError(
+                f"{xml_path} has no floor quat placeholder to substitute; "
+                "slope_deg requires a scene with quat=\"1 0 0 0\" on its floor geom"
+            )
+        xml_text = xml_text.replace('quat="1 0 0 0"', quat, 1)
+
     self._mj_model = mujoco.MjModel.from_xml_string(
-        epath.Path(xml_path).read_text(), assets=self._model_assets
+        xml_text, assets=self._model_assets
     )
     self._mj_model.opt.timestep = self.sim_dt
 
@@ -71,23 +95,10 @@ class G1Env(mjx_env.MjxEnv):
     self._mj_model.vis.global_.offwidth = 3840
     self._mj_model.vis.global_.offheight = 2160
 
-    # MODIFIED: tilt the floor for the climbing task.
-    #
-    # One slope per run rather than per environment. geom_quat IS vmappable --
-    # it is (ngeom, 4), the same per-geom class of field as body_mass that
-    # domain_randomize already batches -- but a per-env angle would have to be
-    # sampled in BOTH randomize.py (for the physics) and reset (for the reward's
-    # uphill direction), and those two RNGs do not share state. They would
-    # silently disagree. Fixing the slope per run makes the normal a
-    # compile-time constant, free under jit, and every metric in a run
-    # attributable to one angle.
-    self._slope_rad = float(np.deg2rad(self._config.slope_deg))
-    floor_gid = self._mj_model.geom("floor").id
-    # Rotate about +Y so the slope rises along +X: uphill is +X.
-    half = 0.5 * self._slope_rad
-    self._mj_model.geom_quat[floor_gid] = [np.cos(half), 0.0, np.sin(half), 0.0]
     # Surface normal and up-gradient direction, both in world coords. Derived
-    # from the same angle as the quat above, so they cannot drift apart.
+    # from the same angle as the quat substituted above, so they cannot drift.
+    # One slope per run: the normal is a compile-time constant, free under jit,
+    # and every metric in a run is attributable to one angle.
     self._slope_normal = np.array(
         [np.sin(self._slope_rad), 0.0, np.cos(self._slope_rad)]
     )

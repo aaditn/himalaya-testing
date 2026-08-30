@@ -25,6 +25,9 @@ def main():
     ap.add_argument("--vy", type=float, default=0.0)
     ap.add_argument("--wz", type=float, default=0.0, help="commanded yaw rate")
     ap.add_argument("--rough", action="store_true")
+    ap.add_argument("--slope-deg", type=float, default=None,
+                    help="tilt the floor by N degrees (uses the slope_terrain "
+                         "scene, which is the rough heightfield on a tilt)")
     ap.add_argument("--camera", default="side",
                     help="'side'/'front'/'chase' = fixed world-up cameras; "
                          "'track' = Playground's body-mounted camera, which "
@@ -49,10 +52,18 @@ def main():
     NJMAX, NACONMAX = 160, 131072
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    task = "rough_terrain" if args.rough else "flat_terrain"
+    if args.slope_deg is not None:
+        task = "slope_terrain"
+    else:
+        task = "rough_terrain" if args.rough else "flat_terrain"
     cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
+    # base.py reads this at load time and writes the floor geom's quat, so the
+    # tilt lands on the model that is actually stepped AND the one that is
+    # rendered -- both come from the same MjModel here.
+    if args.slope_deg is not None:
+        cfg.slope_deg = args.slope_deg
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.

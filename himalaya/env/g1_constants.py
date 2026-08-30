@@ -52,6 +52,14 @@ FEET_ONLY_ROUGH_TERRAIN_XML = (
 FEET_ONLY_SLOPE_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_slope_terrain.xml"
 )
+# Tilted INFINITE plane. The hfield version above is a finite 20x20 m slab with
+# 1 m of solid base, so rotating it about the origin swings that slab through
+# the spawn point and the robot lands on its edge rather than its sloped face.
+# A plane has no edge, so the geometry is unambiguous -- at the cost of being
+# smooth, where hands cannot help.
+FEET_ONLY_RAMP_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_ramp_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
@@ -59,6 +67,7 @@ def task_to_xml(task_name: str) -> epath.Path:
       "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
       "slope_terrain": FEET_ONLY_SLOPE_TERRAIN_XML,
+      "ramp_terrain": FEET_ONLY_RAMP_TERRAIN_XML,
   }[task_name]
 
 
