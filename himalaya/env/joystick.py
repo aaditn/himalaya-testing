@@ -43,7 +43,38 @@ from himalaya.env import scene as scene_mod
 def default_config() -> config_dict.ConfigDict:
   return config_dict.create(
       ctrl_dt=0.02,
-      sim_dt=0.002,
+      # MEASURED: physics is ~100% of env.step. Ten substeps at 3.69 ms
+      # against a 30.86 ms step -- obs, rewards and termination together are
+      # under 10%, so the substep count is the only real throughput lever.
+      # (Collision culling is already maximal: 1 of 72 geoms collides, the
+      # rest go through 7 explicit <pair> elements, so broadphase does
+      # nothing. Shrinking naconmax 8x buys 1.01x. Neither is worth touching.)
+      #
+      # 0.005 with implicitfast, benchmarked at 4096 envs against a
+      # dt=0.002 i3/5 Euler reference:
+      #
+      #   dt.002 i3/5 Euler        30.88 ms  1.00x  deviation  --
+      #   dt.004 i2/4 Euler        15.97 ms  1.93x  deviation 0.0408 m
+      #   dt.004 i3/5 implicitfast 16.95 ms  1.82x  deviation 0.0181 m
+      #   dt.005 i3/5 implicitfast 14.04 ms  2.20x  deviation 0.0094 m
+      #   dt.008 i3/5 implicitfast 12.69 ms  2.43x  deviation 0.3841 m
+      #
+      # "deviation" is max divergence of the pelvis trajectory over a 50-step
+      # zero-action collapse. 0.008 is BROKEN -- it sinks -0.74 m where the
+      # reference sinks -1.00 and ends at tilt 0.446 vs 0.10, so its longer
+      # survival is the physics failing to resolve the fall, not a better
+      # integrator. Do not be tempted by it.
+      #
+      # implicitfast is what makes this safe. The kp=3000 arm gains are
+      # exactly what large explicit timesteps destabilise: Euler at 0.004
+      # nearly doubles peak joint velocity (67.7 -> 124.5 rad/s, the arms
+      # ringing), while implicitfast at 0.005 holds it to 83.8. So the
+      # implicit integrator is both faster AND closer to the reference --
+      # not a fidelity-for-speed trade.
+      #
+      # If a run stalls where a previous one learned, put this back to 0.002
+      # with Euler before blaming the reward.
+      sim_dt=0.005,
       episode_length=1000,
       action_repeat=1,
       action_scale=0.5,

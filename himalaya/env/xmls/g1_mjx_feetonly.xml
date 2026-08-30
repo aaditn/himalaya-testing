@@ -1,7 +1,7 @@
 <mujoco model="g1_29dof_rev_1_0">
   <compiler angle="radian"/>
 
-  <option iterations="3" ls_iterations="5" timestep=".002" integrator="Euler">
+  <option iterations="3" ls_iterations="5" timestep=".005" integrator="implicitfast">
     <flag eulerdamp="disable"/>
   </option>
 
@@ -148,6 +148,12 @@
       file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_pitch_link.STL"/>
     <mesh name="right_wrist_yaw_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_yaw_link.STL"/>
     <mesh name="right_rubber_hand" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_rubber_hand.STL"/>
+    <!-- MODIFIED: not stock. Onshape-exported end effector (End-Effector.obj),
+         split into its two CAD parts because MuJoCo takes one object per mesh
+         asset. Visual only -- the hand collision capsule below is unchanged, so
+         physics and every reward term are bit-identical to before this. -->
+    <mesh name="end_effector_body" file="assets/end_effector_body.obj"/>
+    <mesh name="end_effector_collar" file="assets/end_effector_collar.obj"/>
   </asset>
 
   <worldbody>
@@ -302,7 +308,6 @@
             <!-- <geom class="collision" type="capsule" size="0.07" fromto="0 0 0 0 -0.05 0.25" rgba="1 1 1 1"/> -->
             <!-- <geom class="collision" type="capsule" size="0.07" fromto="0 0 0 0 0.05 0.25" rgba="1 1 1 1"/> -->
             <!-- <geom class="collision" type="capsule" size="0.11" fromto="0 0 0.1 0 0 0.38"/> -->
-
             <site name="imu_in_torso" size="0.01" pos="-0.03959 -0.00224 0.14792"/>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778"
               quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
@@ -347,7 +352,17 @@
                           <joint name="left_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"/>
+                          <!-- MODIFIED: stock G1 rubber hand, disabled (group="3"). The end effector
+                               below replaces it; leaving both on buries one mesh inside the other. -->
+                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" group="3" mesh="left_rubber_hand"/>
+                          <!-- MODIFIED: end effector, visual only. Mesh -Z is the ball tip, so quat
+                               rotates -Z onto the arm's +X. Origin at x=0.062 puts the ball tip at
+                               x=0.121 and the cup mouth at x=0.033, so the part occupies the space the
+                               stock rubber hand did. The collision capsule is left unchanged. -->
+                          <geom class="visual" mesh="end_effector_body" pos="0.062 0.003 0"
+                            quat="0.70710678 0 -0.70710678 0" rgba="0.62 0.81 0.93 1"/>
+                          <geom class="visual" mesh="end_effector_collar" pos="0.062 0.003 0"
+                            quat="0.70710678 0 -0.70710678 0" rgba="0.45 0.45 0.48 1"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="left_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
@@ -401,7 +416,13 @@
                           <joint name="right_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"/>
+                          <!-- MODIFIED: stock G1 rubber hand, disabled. See the left hand above. -->
+                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" group="3" mesh="right_rubber_hand"/>
+                          <!-- MODIFIED: end effector, visual only. See the left hand above. -->
+                          <geom class="visual" mesh="end_effector_body" pos="0.062 -0.003 0"
+                            quat="0.70710678 0 -0.70710678 0" rgba="0.62 0.81 0.93 1"/>
+                          <geom class="visual" mesh="end_effector_collar" pos="0.062 -0.003 0"
+                            quat="0.70710678 0 -0.70710678 0" rgba="0.45 0.45 0.48 1"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
