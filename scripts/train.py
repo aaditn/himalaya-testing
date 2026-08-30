@@ -45,6 +45,9 @@ def main():
                     help="Run A, the null test: the WALKING reward on a tilted "
                          "floor, no climb term. Checks that the slope-frame "
                          "retargeting works before a long run assumes it does.")
+    ap.add_argument("--climb-walk", type=float, default=None, metavar="DEG",
+                    help="Run B: walk UP a slope of DEG degrees. Run A's "
+                         "walking reward plus progress_uphill at 1.5.")
     ap.add_argument("--climb", type=float, default=None, metavar="DEG",
                     help="train the climbing task on a rough slope of DEG "
                          "degrees (strips the reward terms that forbid a "
@@ -77,12 +80,15 @@ def main():
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from himalaya.env import Joystick, climb_config, default_config
-    from himalaya.env import walk_on_slope_config
+    from himalaya.env import walk_on_slope_config, climb_walk_config
     from himalaya.env import randomize as g1_randomize
 
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    if args.walk_slope is not None:
+    if args.climb_walk is not None:
+        task = "mountain_terrain"
+        cfg = climb_walk_config(args.climb_walk)
+    elif args.walk_slope is not None:
         task = "mountain_terrain"
         cfg = walk_on_slope_config(args.walk_slope)
     elif args.climb is not None:

@@ -45,6 +45,33 @@ SCENES = {"mountain": "mountain_terrain", "flat": "flat_terrain",
           "rough": "rough_terrain"}
 
 
+def _terrain_height(model, world_xyz, slope_rad):
+    """Relief above the mean plane at a world point, along the slope normal.
+
+    Mirrors G1Env.terrain_height_at (himalaya/env/base.py). Kept here rather
+    than in scene.py because it needs the compiled model's hfield data, which
+    scene.py deliberately does not load.
+    """
+    if model.nhfield == 0:
+        return 0.0
+    nr = int(model.hfield_nrow[0]); nc = int(model.hfield_ncol[0])
+    z = float(model.hfield_size[0][2])
+    hx = float(model.hfield_size[0][0]); hy = float(model.hfield_size[0][1])
+    g = np.array(model.hfield_data[: nr * nc]).reshape(nr, nc) * z
+    R = np.array([[np.cos(slope_rad), 0.0, np.sin(slope_rad)],
+                  [0.0, 1.0, 0.0],
+                  [-np.sin(slope_rad), 0.0, np.cos(slope_rad)]])
+    local = R.T @ np.asarray(world_xyz, dtype=float)
+    fx = np.clip((local[0] + hx) / (2 * hx) * (nc - 1), 0, nc - 1)
+    fy = np.clip((local[1] + hy) / (2 * hy) * (nr - 1), 0, nr - 1)
+    x0, y0 = int(np.floor(fx)), int(np.floor(fy))
+    x1, y1 = min(x0 + 1, nc - 1), min(y0 + 1, nr - 1)
+    tx, ty = fx - x0, fy - y0
+    top = g[y0, x0] * (1 - tx) + g[y0, x1] * tx
+    bot = g[y1, x0] * (1 - tx) + g[y1, x1] * tx
+    return float(top * (1 - ty) + bot * ty)
+
+
 def build(scene, slope_deg):
     slope = np.deg2rad(slope_deg)
     xml = sc.tilted_xml(SCENES[scene], slope)
@@ -119,15 +146,18 @@ def main():
         # Spawn where TRAINING spawns. Both numbers come from scene.py, so
         # changing the spawn moves the viewer and the trainer together -- the
         # split copy here is exactly what let them disagree before.
-        x = args.x if args.x is not None else sc.SPAWN[0]
-        y = args.y if args.y is not None else sc.SPAWN[1]
-        data.qpos[0], data.qpos[1] = x, y
-        data.qpos[2] = data.qpos[2] + sc.surface_z(x, slope)
-        # tilt the body to stand perpendicular to the slope
-        h = 0.5 * slope
-        tilt = np.array([np.cos(h), 0.0, np.sin(h), 0.0])
-        q = data.qpos[3:7].copy()
-        mujoco.mju_mulQuat(data.qpos[3:7], tilt, q)
+        # ONE definition of the spawn, shared with joystick.py reset(). Do not
+        # reimplement any part of it here -- that split is what made this viewer
+        # show a different heading and height than training used.
+        init_h = float(model.keyframe("knees_bent").qpos[2])
+        data.qpos[:] = sc.spawn_pose(
+            data.qpos, slope, init_h,
+            lambda p: _terrain_height(model, p, slope))
+        if args.x is not None:
+            data.qpos[0] = args.x
+        if args.y is not None:
+            data.qpos[1] = args.y
+        x, y = float(data.qpos[0]), float(data.qpos[1])
         mujoco.mj_forward(model, data)
         # Lift until nothing is inside the FLOOR.
         #

@@ -59,6 +59,33 @@ def walk_on_slope_config(slope_deg: float = 35.0):
   return cfg
 
 
+def climb_walk_config(slope_deg: float = 15.0):
+  """Run B: walk UP the slope. Run A's config plus the climb objective.
+
+  Run A proved the walking reward transfers to a tilted mountain -- 0 falls in
+  a 12 s clip, episode length 68 -> 239 over 41M steps. But it drifted 0.31 m
+  DOWNhill, because nothing in that config paid for height. This adds the one
+  term that does.
+
+  progress_uphill is deliberately posture-blind and route-blind: it rewards
+  metres of height gained per second and says nothing about how or where. The
+  corridor wins not because the reward names it but because it is the cheapest
+  line up -- off-lane is broken ground and 0.55-0.85 m banks. That is what
+  keeps the route emergent rather than scripted.
+
+  Weight 1.5, not 8.0. Its job is not to be the objective; tracking_lin_vel
+  already is, and it is measured in the body frame so on a slope-aligned torso
+  it already means "up the hill". progress_uphill only has to break the
+  symmetry between walking up the corridor and walking down it, which score
+  identically otherwise. At 1.5 it pays ~190 per 1000-step episode against
+  walking's ~1200; turning around swings it to -190, a 380 gap that is
+  decisive without being worth abandoning the gait for.
+  """
+  cfg = walk_on_slope_config(slope_deg)
+  cfg.reward_config.scales.progress_uphill = 1.5
+  return cfg
+
+
 def climb_config(slope_deg: float = 30.0):
   """Config for the climbing task: reach the top of a steep rough slope.
 

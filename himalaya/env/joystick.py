@@ -318,101 +318,46 @@ class Joystick(g1_base.G1Env):
       qpos = qpos.at[0:2].set(jp.array(scene_mod.SPAWN))
 
     rng, key = jax.random.split(rng)
-    # MODIFIED: on a slope, face UPHILL. On flat ground keep the full circle.
+    # Spawn placement -- position, heading, body tilt, height -- comes from
+    # scene.spawn_pose(). THE single definition, shared with scripts/view.py.
     #
-    # The body tilt applied below rotates the robot about +Y to stand
-    # perpendicular to the surface, and that pitches its forward axis DOWN the
-    # hill: measured, body +x lands at [0.775, 0, -0.632] against an uphill
-    # vector of [-0.819, 0, 0.574], a dot product of -0.997. So a forward
-    # velocity command told the robot to walk down.
+    # Do not reimplement any part of it here. This block previously carried its
+    # own copy of the yaw, the tilt, and three height corrections, while the
+    # viewer carried a different subset; the two disagreed silently and the
+    # viewer showed a robot facing a different way than training used.
     #
-    # That is what capped every slope episode at ~28 steps regardless of
-    # terrain relief: tilt held at 0.92-1.00 the whole time (the robot was
-    # upright and walking competently) while its height above the mean plane
-    # decayed until the clearance check killed it. Not a fall -- a descent.
-    #
-    # A yaw of pi turns the body to face up the hill. The +/-0.3 rad of jitter
-    # keeps some heading variety without making "which way is up" a separate
-    # problem to solve.
+    # slope_rad is a compile-time constant, so the numpy call below is traced
+    # once and folded into the graph rather than run per step.
     if self._slope_rad != 0.0:
-      yaw = jp.pi + jax.random.uniform(key, (1,), minval=-0.3, maxval=0.3)
+      rng, key = jax.random.split(rng)
+      jitter = jax.random.uniform(
+          key, (), minval=-scene_mod.SPAWN_YAW_JITTER,
+          maxval=scene_mod.SPAWN_YAW_JITTER)
+      # The jitter is the only stochastic part, so build the pose at zero
+      # jitter and rotate by the sampled angle afterwards.
+      # terrain_height=None: the heightfield lookup stays in jax below, since
+      # under jit it returns a tracer that numpy cannot consume.
+      # Read the keyframe from the MODEL, not from self._init_q: the latter is
+      # a jax array and becomes a tracer under jit, which numpy cannot consume.
+      kf = np.array(self._mj_model.keyframe("knees_bent").qpos)
+      base = scene_mod.spawn_pose(
+          kf, self._slope_rad, float(kf[2]), terrain_height=None)
+      qpos = qpos.at[0:7].set(jp.array(base[0:7]))
+      # Same probe grid and max-reduction as scene.spawn_lift_relief, in jax.
+      n = jp.array(self._slope_normal)
+      offs = jp.array(scene_mod.probe_offsets())
+      relief = jp.max(jax.vmap(
+          lambda o: self.terrain_height_at(qpos[0:3] + o))(offs))
+      qpos = qpos.at[0:3].add(relief * n)
+      qpos = qpos.at[2].add(scene_mod.SPAWN_CLEARANCE)
+      spin = math.axis_angle_to_quat(jp.array([0.0, 0.0, 1.0]),
+                                     jp.array([jitter]))
+      qpos = qpos.at[3:7].set(math.quat_mul(spin, qpos[3:7]))
     else:
+      rng, key = jax.random.split(rng)
       yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
-    quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
-    new_quat = math.quat_mul(qpos[3:7], quat)
-    qpos = qpos.at[3:7].set(new_quat)
-
-    # MODIFIED: place the robot ON the slope, standing perpendicular to it.
-    #
-    # The keyframe height is a fixed world z, which is only correct on level
-    # ground. The floor is rotated about +Y, so its surface sits at
-    # z = -x*tan(slope), and at 45 degrees the xy jitter above alone spans
-    # 1.0 m of surface height: the robot was being dropped from up to 1.25 m
-    # in the air and landing hard, or spawned underneath the surface. Every
-    # episode began in a failed state, which reads as "the policy cannot
-    # learn" rather than "the spawn is wrong".
-    #
-    # Tilting the body by the same angle matters too: spawned world-vertical
-    # on a 45 degree slope the robot is already 45 degrees off the surface
-    # normal, i.e. mid-fall before it has acted.
-    if self._slope_rad != 0.0:
-        # On the platform the ground is LEVEL at a fixed height, not the
-        # tilted surface -- using the slope formula here would drop the robot
-        # from metres up, or bury it.
-        if self._platform_x is not None:
-            surface_z = self._platform_top
-        else:
-            surface_z = -qpos[0] * jp.tan(self._slope_rad)
-        qpos = qpos.at[2].set(qpos[2] + surface_z)
-        if self._platform_x is None:
-            # Align the body to the slope. On the platform the ground is
-            # level, so the robot should stand upright instead.
-            tilt = math.axis_angle_to_quat(
-                jp.array([0.0, 1.0, 0.0]), jp.array([self._slope_rad])
-            )
-            qpos = qpos.at[3:7].set(math.quat_mul(tilt, qpos[3:7]))
-        # Rotating the body about the pelvis swings the feet downward, so the
-        # pelvis has to rise by the standing height times (1 - cos(slope)) to
-        # keep the feet on the surface rather than buried in it. Measured
-        # without this: feet sit 0.196 m under a 45 degree slope.
-        if self._platform_x is None:
-            qpos = qpos.at[2].add(
-                self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
-            )
-        # Clear the terrain's own relief -- at THIS spawn point, not at the
-        # terrain's global peak. Spawning against the mean plane puts the robot
-        # inside any rock above it, but adding hf.max() everywhere dropped the
-        # average episode from 0.76 m up and the flattest from 1.10 m, roughly
-        # the robot's own height, onto a 35 degree slope before it could act.
-        #
-        # The relief is stacked along the slope normal (the floor geom's local
-        # z axis), so the correction goes along the normal too. Its z component
-        # is what qpos[2] needs; the x component shifts the robot along the
-        # slope by a few centimetres and is left alone.
-        if self._platform_x is None:
-            n = jp.array(self._slope_normal)
-            # Lift the body so the LOWEST part of it clears the rock.
-            #
-            # terrain_height_at returns relief above the mean plane for a given
-            # x,y column -- the height you sample FROM does not change the
-            # answer. So probing "under the feet" by offsetting down the normal
-            # read the same columns as the pelvis and the three-way maximum was
-            # over three nearly identical numbers, applied to a pelvis already
-            # standing 0.755 m up. Measured, that started every episode with
-            # 0.82 m of clearance instead of the intended 0.05.
-            #
-            # What matters is the relief under the FOOTPRINT: the columns the
-            # body actually spans. Sample a small grid around the spawn x,y and
-            # take the highest, which is the rock the lowest geom would hit.
-            # Grid half-width and clearance live in scene.py. The grid takes
-            # the HIGHEST rock within the span, so a wide span lifts the robot
-            # onto a boulder it is standing beside rather than on; 0.25 m
-            # overshot the measured 0.17-0.22 m touchdown height badly.
-            offs = jp.array(scene_mod.probe_offsets())
-            relief = jp.max(jax.vmap(
-                lambda o: self.terrain_height_at(qpos[0:3] + o))(offs))
-            qpos = qpos.at[0:3].add(relief * n)
-            qpos = qpos.at[2].add(scene_mod.SPAWN_CLEARANCE)
+      quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
+      qpos = qpos.at[3:7].set(math.quat_mul(qpos[3:7], quat))
 
     # qpos[7:]=*U(0.5, 1.5)
     #
@@ -609,7 +554,13 @@ class Joystick(g1_base.G1Env):
   # matches the bipedal MAX_TILT, measured against the surface instead of the
   # world.
   TILT_TOL = 0.5            # dot(torso_up, slope_normal); 1.0 = normal to slope
-  MIN_SLOPE_CLEARANCE = 0.25  # metres measured ALONG the surface normal
+  # Pelvis height above its own lowest foot, along the surface normal. Healthy
+  # standing measures 0.73-0.77 m; the bipedal MIN_TORSO_HEIGHT of 0.4 is the
+  # same fraction of a 0.78 m nominal, so 0.40 keeps the two tasks consistent.
+  # The old 0.25 was sized for a different quantity (height above the mean
+  # plane) and against this one would let the pelvis fall to a third of
+  # standing height before the episode ended.
+  MIN_SLOPE_CLEARANCE = 0.40
 
   def _get_termination(self, data: mjx.Data) -> jax.Array:
     if self._slope_rad != 0.0:
@@ -619,19 +570,29 @@ class Joystick(g1_base.G1Env):
       # once the ground rises with distance. Measure both against the surface.
       n = jp.array(self._slope_normal)
       fall_termination = jp.dot(self.get_gravity(data, "torso"), n) < self.TILT_TOL
-      # MODIFIED: clearance above the ROCK UNDERFOOT, not above the mean plane.
+      # MODIFIED: "am I standing" measured as pelvis height above MY OWN
+      # LOWEST FOOT, along the slope normal. No terrain lookup at all.
       #
-      # dot(qpos, n) is the distance from the plane the terrain is built on, so
-      # on a heightfield with a metre of relief it says almost nothing about
-      # whether the robot is standing: upright in a trough reads LOWER than
-      # lying flat on a peak. Measured at the spawn it gives 0.655 against a
-      # 0.25 threshold -- only 0.41 m of margin for a pelvis that stands 0.755 m
-      # tall, so an ordinary crouch or a step into a dip ends the episode.
+      # Two earlier versions of this check were wrong, both for the same
+      # reason -- they measured against the world instead of against the robot:
       #
-      # Subtracting terrain_height_at makes the quantity mean what its name
-      # says. Same class of bug as feet_phase measuring foot height in world z.
-      clearance = jp.dot(data.qpos[0:3], n) - self.terrain_height_at(
-          data.qpos[0:3])
+      #   dot(qpos, n) alone is height above the plane the terrain is built on,
+      #   which on a heightfield with a metre of relief says nothing about
+      #   posture: upright in a trough reads LOWER than lying flat on a peak.
+      #
+      #   Subtracting terrain_height_at looks like the fix but is not. That
+      #   function bilinearly interpolates the heightfield, and on 48 degree
+      #   faces the interpolated surface under the pelvis can sit well above
+      #   the rock the feet are actually on. Measured: a robot with tilt 0.970
+      #   -- upright to within 14 degrees of perpendicular -- read clearance
+      #   0.162 against a 0.25 threshold and was terminated as fallen.
+      #
+      # Pelvis-above-lowest-foot is the quantity the check was always reaching
+      # for. It is invariant to terrain entirely, so no interpolation can fool
+      # it. Measured on healthy spawns: 0.73-0.77 m.
+      foot_pos = data.site_xpos[self._feet_site_id]
+      lowest_foot = jp.min(foot_pos @ n)
+      clearance = jp.dot(data.qpos[0:3], n) - lowest_foot
       fall_termination |= clearance < self.MIN_SLOPE_CLEARANCE
     else:
       # MODIFIED: was `< 0.0`. Fire at ~60 degrees rather than waiting for 90,
@@ -914,7 +875,11 @@ class Joystick(g1_base.G1Env):
     # altitude is implied by the gravity vector and proprioception it already
     # senses.
     speed = jp.dot(global_linvel, jp.array(self._slope_normal_up))
-    reward = jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
+    # SYMMETRIC clip. It was [-1.0, +0.30], penalising lost height 3.3x harder
+    # than gained height -- so under an exploring policy the expected value of
+    # moving at all was negative, and the optimal response was to stand still.
+    cap = self._config.reward_config.max_uphill_speed
+    reward = jp.clip(speed, -cap, cap)
     # The platform is a starting position, not part of the task. Movement
     # there earns nothing -- otherwise it is just a flat-ground walking
     # reward to farm instead of climbing.

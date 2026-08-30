@@ -29,6 +29,40 @@ tuned upstream.
 There are no pretrained weights. Playground ships recipes, not checkpoints —
 verified by searching the package. Training is unavoidable.
 
+## One definition, or it will drift
+
+**IMPORTANT: a fact that describes the environment lives in exactly one place —
+`himalaya/env/scene.py` — and every consumer imports it. Never write a second
+copy, not even a small one, not even temporarily.**
+
+This has cost real time three separate ways in this repo:
+
+- The spawn position was set in `joystick.py` and hardcoded again in
+  `scripts/view.py`. Changing it moved training and left the viewer showing the
+  old position, so the two disagreed silently and the disagreement looked like a
+  physics bug.
+- `record.py` kept `pair_friction[0:2]` after the model grew to four floor
+  pairs, so rendered clips ran the hands at XML-default friction while the feet
+  used the swept value. Nothing errored.
+- The spawn *heading* was added to `joystick.py` after the position had been
+  consolidated, recreating the exact split that had just been removed. The
+  viewer had no yaw at all and had never shown the trainer's orientation.
+
+The rule that prevents it: when you add anything that both the trainer and a
+script need to agree on — a constant, a placement, a network shape, an index
+into a MuJoCo array — put it in `scene.py` first and import it from both. If it
+cannot go there (it needs jax, or a compiled model), put the *shared part*
+there and keep the split explicit, as `spawn_pose` and `spawn_lift_relief` do.
+
+`scene.py` is numpy-only on purpose. `himalaya/env/__init__.py` imports
+`joystick`, which imports jax, so a laptop viewer must load `scene.py` by file
+path rather than as `himalaya.env.scene`. That constraint is what keeps one
+definition serving both a GPU pod and a laptop.
+
+**Before editing anything under `himalaya/env/`, grep for the value you are
+about to change.** If it appears in more than one file, consolidate it before
+you change it, not after.
+
 ## Verify with video, not curves
 
 IMPORTANT: every change to the environment, the reward, or the gains ships with
