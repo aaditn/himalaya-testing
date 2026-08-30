@@ -32,12 +32,25 @@ from himalaya.env import scene as sc
 # that step -- the likely source of floor penetration.
 NJMAX = sc.NJMAX
 NACONMAX = sc.NACONMAX
+# Where new observation dims go when zero-padding a warm start. See scene.py.
+OBS_INSERT_AT = sc.OBS_INSERT_AT
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=200_000_000)
     ap.add_argument("--envs", type=int, default=8192)
+    ap.add_argument("--sim-dt", type=float, default=None, metavar="S",
+                    help="physics timestep. Default 0.002 = 10 substeps per "
+                         "0.02 s control step, and MEASURED, physics is ~100%% "
+                         "of env.step: obs, rewards and termination together "
+                         "are under 10%%. 0.004 halves the substeps for a "
+                         "1.93x throughput win and stayed stable under a real "
+                         "policy (survival 40.7 -> 39.8 of 300, no NaN, peak "
+                         "actuator force 75 -> 68). 0.005 diverges. The one "
+                         "untested risk is the kp=3000 arm gains: stiff "
+                         "actuators are what large timesteps destabilise, so "
+                         "confirm the reward curve tracks before trusting it.")
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
@@ -102,6 +115,9 @@ def main():
         cfg = default_config()
     cfg.njmax = NJMAX
     cfg.naconmax = NACONMAX
+    if args.sim_dt is not None:
+        cfg.sim_dt = args.sim_dt
+        print(f"  sim_dt={cfg.sim_dt} -> {round(cfg.ctrl_dt/cfg.sim_dt)} substeps per control step")
 
     name = args.name or f"g1_{datetime.now():%H%M%S}"
     out = Path("runs") / name
@@ -137,7 +153,7 @@ def main():
         # instead of being discarded.
         import jax.numpy as _jp
 
-        def _pad_first_layer(net_params, want):
+        def _pad_first_layer(net_params, want, at):
             tree = net_params.get("params", net_params)
             for name in sorted(tree):
                 layer = tree[name]
@@ -147,9 +163,11 @@ def main():
                 if k.ndim == 2 and k.shape[0] < want:
                     n = want - k.shape[0]
                     layer["kernel"] = _jp.concatenate(
-                        [k, _jp.zeros((n, k.shape[1]), k.dtype)], axis=0)
+                        [k[:at],
+                         _jp.zeros((n, k.shape[1]), k.dtype),
+                         k[at:]], axis=0)
                     print(f"    padded {name}: {k.shape} ->"
-                          f" {layer['kernel'].shape}")
+                          f" {layer['kernel'].shape}  ({n} zeros at {at})")
                     return True
             return False
 
@@ -170,7 +188,10 @@ def main():
                 want = sizes.get(k, v.shape[0])
                 if v.shape[0] < want:
                     n = want - v.shape[0]
-                    v = _jp.concatenate([v, _jp.full((n,), fill, v.dtype)])
+                    at = min(OBS_INSERT_AT, v.shape[0])
+                    v = _jp.concatenate([v[:at],
+                                         _jp.full((n,), fill, v.dtype),
+                                         v[at:]])
                 out[k] = v
             return out
         warm_params[0] = nrm.replace(
@@ -178,9 +199,10 @@ def main():
             std=_grow("std", 1.0),
             summed_variance=_grow("summed_variance", 0.0))
         print("    padded observation normalizer")
-        _pad_first_layer(warm_params[1], sizes["state"])
+        _pad_first_layer(warm_params[1], sizes["state"], OBS_INSERT_AT)
         if len(warm_params) > 2:
-            _pad_first_layer(warm_params[2], sizes["privileged_state"])
+            _pad_first_layer(warm_params[2], sizes["privileged_state"],
+                             OBS_INSERT_AT)
         warm_params = tuple(warm_params)
         print(f"  warm start: {args.load}")
         print(f"    restoring policy + observation normalizer"

@@ -60,6 +60,28 @@ FLOOR_PAIRS = slice(0, 4)
 # load into the policy.
 HIDDEN_LAYERS = (512, 256, 128)
 
+# Where NEW observation dimensions were inserted, for warm starts.
+#
+# scripts/train.py zero-pads a restored first layer when the observation grows,
+# and that padding is only correct if it goes where the new dims actually are.
+# Run H appended six zeros at the END while joystick.py had inserted
+# wall_sense(6) BEFORE hand_contact(2) -- so the restored policy read
+# wall_sense at the two indices its normalizer had learned as hand_contact,
+# a near-binary flag with mean 0.05 and std 0.22. Dividing a +/-1 wall reading
+# by that std fed the first layer a permanent ~4.5-sigma spike. The run sat at
+# episode length 29.4 and reward -4.7 for 107M steps and never recovered,
+# while Run G had climbed from the identical start to length 607.
+#
+# The layout of state is:
+#   linvel 3, gyro 3, gravity 3, command 3, joint_angles 29, joint_vel 29,
+#   last_act 29, phase 4, route_local 2, heightmap 25, wall_sense 6,
+#   hand_contact 2   = 138
+# privileged_state is hstack([state, ...]), so the same offset applies to both.
+#
+# Set this to the index where the new dims begin. If new dims are appended at
+# the very end, a value >= the old width is equivalent to appending.
+OBS_INSERT_AT = 130
+
 
 def scene_xml(task):
     return XMLS / SCENES[task]
