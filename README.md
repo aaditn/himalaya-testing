@@ -88,6 +88,25 @@ Upload a completed run after `hf auth login`:
 python scripts/upload_huggingface.py runs/<final-stage> your-org/g1-four-limb-climb --private
 ```
 
+## Hugging Face Jobs remote
+
+`myremote` is configured for the `iteratehack` organization in
+`configs/hf_jobs.json`. The wrapper automatically scopes list/run commands to
+that organization. Runs also mount the existing `iteratehack/himalaya-runs`
+bucket read-write at `/runs` and receive the label `remote=myremote`.
+Credentials are kept by the Hugging Face CLI and are never stored in this repo.
+
+```bash
+python scripts/myremote.py config
+python scripts/myremote.py list --limit 5
+python scripts/myremote.py run --name g1-climb --flavor a10g-large --timeout 8h \
+  <image> <command> [args...]
+```
+
+Use `--no-runs-volume` after `run` for a job that should not mount the default
+bucket. Starting a Job consumes the organization's paid compute; `config` and
+`list` do not start anything.
+
 ## Four-limb climbing task
 
 The desired gait is deliberately closer to walking on all fours than occasional

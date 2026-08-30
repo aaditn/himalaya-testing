@@ -1,0 +1,5 @@
+{
+  "name": "myremote",
+  "namespace": "iteratehack",
+  "runs_volume": "hf://buckets/iteratehack/himalaya-runs:/runs:rw"
+}
