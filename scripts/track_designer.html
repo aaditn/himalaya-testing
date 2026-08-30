@@ -1,0 +1,320 @@
+<main id="track-app">
+  <header>
+    <div>
+      <p class="eyebrow">Himalaya G1</p>
+      <h1>Configurable slope track</h1>
+      <p class="subhead">Tune the terrain, save it, then open the same track in MuJoCo.</p>
+    </div>
+    <div id="save-state" role="status" aria-live="polite">Loading…</div>
+  </header>
+
+  <section class="layout">
+    <form id="controls">
+      <label class="toggle">
+        <span>
+          <strong>Flat start area</strong>
+          <small>Stable reset zone before the climb</small>
+        </span>
+        <input id="flat_start_enabled" type="checkbox">
+      </label>
+
+      <label>
+        <span>Start length <output id="flat_start_length_m_out"></output></span>
+        <input id="flat_start_length_m" type="range" min="0.5" max="4" step="0.5">
+      </label>
+
+      <label>
+        <span>Slope angle <output id="slope_degrees_out"></output></span>
+        <input id="slope_degrees" type="range" min="5" max="45" step="1">
+      </label>
+
+      <label>
+        <span>Friction μ <output id="friction_out"></output></span>
+        <input id="friction" type="range" min="0.2" max="1.5" step="0.05">
+      </label>
+
+      <label>
+        <span>Roughness <output id="roughness_m_out"></output></span>
+        <input id="roughness_m" type="range" min="0" max="0.05" step="0.005">
+      </label>
+
+      <details>
+        <summary>Track dimensions</summary>
+        <label>
+          <span>Ramp surface length <output id="ramp_surface_length_m_out"></output></span>
+          <input id="ramp_surface_length_m" type="range" min="2" max="10" step="0.5">
+        </label>
+        <label>
+          <span>Summit length <output id="summit_length_m_out"></output></span>
+          <input id="summit_length_m" type="range" min="0.5" max="4" step="0.5">
+        </label>
+        <label>
+          <span>Width <output id="width_m_out"></output></span>
+          <input id="width_m" type="range" min="0.8" max="2" step="0.1">
+        </label>
+        <label>
+          <span>Terrain seed</span>
+          <input id="seed" type="number" min="0" max="2147483647" step="1">
+        </label>
+      </details>
+
+      <div class="actions">
+        <button id="save" type="submit">Save track</button>
+        <button id="reset" type="button">Reset defaults</button>
+      </div>
+    </form>
+
+    <section class="preview" aria-labelledby="preview-title">
+      <div class="preview-heading">
+        <h2 id="preview-title">Side profile</h2>
+        <span id="traction"></span>
+      </div>
+      <svg id="track-preview" viewBox="0 0 760 390" role="img" aria-labelledby="svg-title svg-desc">
+        <title id="svg-title">Configurable humanoid slope track</title>
+        <desc id="svg-desc">A live side view of the flat start, incline, summit, and rough surface.</desc>
+        <path id="terrain-fill" class="terrain-fill"></path>
+        <path id="terrain-edge" class="terrain-edge"></path>
+        <path id="rough-edge" class="rough-edge"></path>
+        <line id="rise-line" class="dimension"></line>
+        <text id="rise-label" class="muted-label"></text>
+        <path id="angle-arc" class="dimension"></path>
+        <text id="angle-label" class="main-label"></text>
+        <g id="robot" class="robot">
+          <circle cx="0" cy="0" r="8"></circle>
+          <path d="M 0 8 L 0 58 M 0 23 L -19 46 M 0 23 L 21 43 M 0 58 L -17 91 M 0 58 L 20 91"></path>
+        </g>
+        <text id="start-label" class="muted-label"></text>
+        <text id="ramp-label" class="main-label"></text>
+        <text id="summit-label" class="muted-label"></text>
+      </svg>
+
+      <dl class="metrics">
+        <div><dt>Rise</dt><dd id="rise"></dd></div>
+        <div><dt>Footprint</dt><dd id="footprint"></dd></div>
+        <div><dt>Static μ threshold</dt><dd id="minimum_mu"></dd></div>
+      </dl>
+    </section>
+  </section>
+</main>
+
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: light-dark(#f3f4f6, #0d1117);
+    color: light-dark(#172033, #eef2f7);
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+  button, input { font: inherit; }
+  #track-app { max-width: 1180px; margin: 0 auto; padding: 28px; }
+  header { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: clamp(1.65rem, 3vw, 2.3rem); font-weight: 650; letter-spacing: -0.03em; }
+  h2 { font-size: 1rem; font-weight: 650; }
+  .eyebrow { color: light-dark(#3b5ccc, #8da8ff); font-size: .76rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 5px; }
+  .subhead { color: light-dark(#5d6676, #9da8b8); margin-top: 7px; }
+  #save-state { color: light-dark(#5d6676, #a9b3c1); font-size: .85rem; padding-top: 7px; white-space: nowrap; }
+  .layout { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  #controls, .preview {
+    background: light-dark(#ffffff, #151b23);
+    border: 1px solid light-dark(#dce1e8, #2a3441);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px light-dark(rgb(21 31 48 / .07), rgb(0 0 0 / .20));
+  }
+  #controls { padding: 18px; }
+  #controls > label, details label { display: block; margin-bottom: 19px; }
+  label > span { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: .9rem; font-weight: 620; }
+  output { color: light-dark(#3b5ccc, #9bb2ff); font-variant-numeric: tabular-nums; font-weight: 650; }
+  input[type="range"] { width: 100%; accent-color: light-dark(#3b5ccc, #8da8ff); margin-top: 10px; }
+  input[type="number"] { width: 100%; margin-top: 9px; border: 1px solid light-dark(#cbd2dc, #394655); border-radius: 8px; padding: 9px 10px; background: light-dark(#fff, #0f141b); color: inherit; }
+  .toggle { display: flex !important; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 17px; border-bottom: 1px solid light-dark(#e7eaf0, #27313d); }
+  .toggle span { display: grid; gap: 2px; }
+  .toggle small { color: light-dark(#697383, #9da8b8); font-weight: 450; }
+  .toggle input { width: 21px; height: 21px; accent-color: light-dark(#3b5ccc, #8da8ff); }
+  details { border-top: 1px solid light-dark(#e7eaf0, #27313d); padding-top: 14px; }
+  summary { cursor: pointer; color: light-dark(#4c5666, #aab4c1); font-size: .88rem; margin-bottom: 17px; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 4px; }
+  button { border: 0; border-radius: 9px; padding: 10px 12px; cursor: pointer; font-weight: 650; }
+  #save { background: light-dark(#24365c, #d7e2ff); color: light-dark(#fff, #172033); }
+  #reset { background: light-dark(#e9edf3, #26313e); color: inherit; }
+  .preview { padding: 18px 18px 12px; }
+  .preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  #traction { color: light-dark(#566173, #aab4c1); font-size: .82rem; font-variant-numeric: tabular-nums; }
+  #traction.warning { color: light-dark(#a43f20, #ff9b79); }
+  svg { display: block; width: 100%; height: auto; min-height: 300px; }
+  .terrain-fill { fill: light-dark(#e6e9ee, #25303b); }
+  .terrain-edge { fill: none; stroke: light-dark(#283448, #e6edf7); stroke-width: 3; stroke-linejoin: round; }
+  .rough-edge { fill: none; stroke: light-dark(#4d6ee1, #8da8ff); stroke-width: 5; stroke-linejoin: round; stroke-linecap: round; }
+  .dimension { fill: none; stroke: light-dark(#778294, #8793a3); stroke-width: 1.4; }
+  .main-label, .muted-label { font-size: 13px; font-family: inherit; text-anchor: middle; }
+  .main-label { fill: light-dark(#172033, #eef2f7); }
+  .muted-label { fill: light-dark(#667183, #9da8b8); }
+  .robot circle { fill: light-dark(#fff, #151b23); stroke: light-dark(#172033, #eef2f7); stroke-width: 2.5; }
+  .robot path { fill: none; stroke: light-dark(#172033, #eef2f7); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; border-top: 1px solid light-dark(#e4e8ee, #293440); }
+  .metrics div { padding: 13px 10px 3px; }
+  .metrics dt { color: light-dark(#687386, #9da8b8); font-size: .75rem; }
+  .metrics dd { margin: 3px 0 0; font-size: 1.05rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  @media (max-width: 760px) {
+    #track-app { padding: 16px; }
+    header { display: block; }
+    #save-state { margin-top: 8px; }
+    .layout { grid-template-columns: 1fr; }
+    svg { min-height: 240px; }
+  }
+</style>
+
+<script>
+(() => {
+  const defaults = {
+    slope_degrees: 30,
+    friction: 0.9,
+    roughness_m: 0.02,
+    flat_start_enabled: true,
+    flat_start_length_m: 2,
+    ramp_surface_length_m: 6,
+    summit_length_m: 1.5,
+    width_m: 1.2,
+    seed: 1
+  };
+  const keys = Object.keys(defaults);
+  const el = id => document.getElementById(id);
+
+  function readForm() {
+    const result = {};
+    for (const key of keys) {
+      const input = el(key);
+      result[key] = input.type === 'checkbox' ? input.checked : Number(input.value);
+    }
+    return result;
+  }
+
+  function writeForm(config) {
+    for (const key of keys) {
+      const input = el(key);
+      if (input.type === 'checkbox') input.checked = Boolean(config[key]);
+      else input.value = config[key];
+    }
+    update();
+  }
+
+  function setOutputs(c) {
+    el('slope_degrees_out').value = `${c.slope_degrees.toFixed(0)}°`;
+    el('friction_out').value = c.friction.toFixed(2);
+    el('roughness_m_out').value = `${(c.roughness_m * 1000).toFixed(0)} mm`;
+    el('flat_start_length_m_out').value = `${c.flat_start_length_m.toFixed(1)} m`;
+    el('ramp_surface_length_m_out').value = `${c.ramp_surface_length_m.toFixed(1)} m`;
+    el('summit_length_m_out').value = `${c.summit_length_m.toFixed(1)} m`;
+    el('width_m_out').value = `${c.width_m.toFixed(1)} m`;
+    el('flat_start_length_m').disabled = !c.flat_start_enabled;
+  }
+
+  function update() {
+    const c = readForm();
+    setOutputs(c);
+    const theta = c.slope_degrees * Math.PI / 180;
+    const flat = c.flat_start_enabled ? c.flat_start_length_m : 0;
+    const run = c.ramp_surface_length_m * Math.cos(theta);
+    const rise = c.ramp_surface_length_m * Math.sin(theta);
+    const total = flat + run + c.summit_length_m;
+    const minMu = Math.tan(theta);
+    const margin = c.friction - minMu;
+
+    const left = 48;
+    const bottom = 335;
+    const usableW = 665;
+    const usableH = 265;
+    const scale = Math.min(usableW / Math.max(total, 1), usableH / Math.max(rise + 0.8, 1.2));
+    const x0 = left + (usableW - total * scale) / 2;
+    const x1 = x0 + flat * scale;
+    const x2 = x1 + run * scale;
+    const y2 = bottom - rise * scale;
+    const x3 = x2 + c.summit_length_m * scale;
+
+    el('terrain-fill').setAttribute('d', `M ${x0} ${bottom} L ${x1} ${bottom} L ${x2} ${y2} L ${x3} ${y2} L ${x3} 355 L ${x0} 355 Z`);
+    el('terrain-edge').setAttribute('d', `M ${x0} ${bottom} L ${x1} ${bottom} L ${x2} ${y2} L ${x3} ${y2}`);
+
+    const points = [];
+    const amplitude = Math.min(7, c.roughness_m * 120);
+    for (let i = 0; i <= 64; i += 1) {
+      const t = i / 64;
+      const wave = 0.58 * Math.sin(t * 61 + c.seed) + 0.27 * Math.sin(t * 29 + 0.7) + 0.15 * Math.sin(t * 97 + 1.8);
+      const nx = Math.sin(theta);
+      const ny = Math.cos(theta);
+      points.push([x1 + (x2 - x1) * t - nx * amplitude * wave, bottom + (y2 - bottom) * t - ny * amplitude * wave]);
+    }
+    el('rough-edge').setAttribute('d', points.map((p, i) => `${i ? 'L' : 'M'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' '));
+
+    el('rise-line').setAttribute('x1', x2 + 11);
+    el('rise-line').setAttribute('x2', x2 + 11);
+    el('rise-line').setAttribute('y1', y2);
+    el('rise-line').setAttribute('y2', bottom);
+    el('rise-label').setAttribute('x', x2 + 18);
+    el('rise-label').setAttribute('y', (y2 + bottom) / 2);
+    el('rise-label').setAttribute('text-anchor', 'start');
+    el('rise-label').textContent = `${rise.toFixed(2)} m`;
+
+    const arcR = 42;
+    el('angle-arc').setAttribute('d', `M ${x1 + arcR} ${bottom} A ${arcR} ${arcR} 0 0 0 ${x1 + arcR * Math.cos(theta)} ${bottom - arcR * Math.sin(theta)}`);
+    el('angle-label').setAttribute('x', x1 + 55);
+    el('angle-label').setAttribute('y', bottom - 14);
+    el('angle-label').textContent = `${c.slope_degrees.toFixed(0)}°`;
+
+    const rt = 0.38;
+    const rx = x1 + (x2 - x1) * rt;
+    const ry = bottom + (y2 - bottom) * rt - 3;
+    el('robot').setAttribute('transform', `translate(${rx} ${ry - 91})`);
+
+    el('start-label').setAttribute('x', (x0 + x1) / 2);
+    el('start-label').setAttribute('y', bottom + 29);
+    el('start-label').textContent = c.flat_start_enabled ? `${flat.toFixed(1)} m start` : 'no flat start';
+    el('ramp-label').setAttribute('x', (x1 + x2) / 2);
+    el('ramp-label').setAttribute('y', Math.min(bottom, y2) - 18);
+    el('ramp-label').textContent = `${c.ramp_surface_length_m.toFixed(1)} m ramp`;
+    el('summit-label').setAttribute('x', (x2 + x3) / 2);
+    el('summit-label').setAttribute('y', y2 - 16);
+    el('summit-label').textContent = `${c.summit_length_m.toFixed(1)} m summit`;
+
+    el('rise').textContent = `${rise.toFixed(2)} m`;
+    el('footprint').textContent = `${total.toFixed(2)} m`;
+    el('minimum_mu').textContent = minMu.toFixed(2);
+    el('traction').textContent = `μ margin ${margin >= 0 ? '+' : ''}${margin.toFixed(2)}`;
+    el('traction').classList.toggle('warning', margin < 0);
+  }
+
+  async function save(config) {
+    el('save-state').textContent = 'Saving…';
+    const response = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(config)
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Save failed');
+    el('save-state').textContent = `Saved ${body.path}`;
+  }
+
+  el('controls').addEventListener('input', update);
+  el('controls').addEventListener('submit', async event => {
+    event.preventDefault();
+    try { await save(readForm()); }
+    catch (error) { el('save-state').textContent = error.message; }
+  });
+  el('reset').addEventListener('click', () => {
+    writeForm(defaults);
+    el('save-state').textContent = 'Defaults loaded — save to apply';
+  });
+
+  fetch('/api/config')
+    .then(response => response.json())
+    .then(body => {
+      writeForm(body.config);
+      el('save-state').textContent = `Loaded ${body.path}`;
+    })
+    .catch(error => {
+      writeForm(defaults);
+      el('save-state').textContent = `Using defaults: ${error.message}`;
+    });
+})();
+</script>

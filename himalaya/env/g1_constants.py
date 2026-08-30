@@ -43,12 +43,16 @@ FEET_ONLY_FLAT_TERRAIN_XML = (
 FEET_ONLY_ROUGH_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
 )
+CUSTOM_TRACK_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_track_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
   return {
       "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
+      "custom_track": CUSTOM_TRACK_TERRAIN_XML,
   }[task_name]
 
 

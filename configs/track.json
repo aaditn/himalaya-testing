@@ -1,0 +1,11 @@
+{
+  "flat_start_enabled": true,
+  "flat_start_length_m": 2.0,
+  "friction": 0.9,
+  "ramp_surface_length_m": 6.0,
+  "roughness_m": 0.02,
+  "seed": 1,
+  "slope_degrees": 30.0,
+  "summit_length_m": 1.5,
+  "width_m": 1.2
+}
