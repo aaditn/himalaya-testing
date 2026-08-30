@@ -1,0 +1,39 @@
+camera:
+  source: 0
+  width: 1280
+  height: 720
+
+markers:
+  dictionary: DICT_4X4_50
+  size_mm: 14.0
+  reference_id: 0
+
+tracking:
+  zero_samples: 40
+  ema_alpha: 0.25
+  max_missing_frames: 8
+
+sensors:
+  - name: left_finger
+    # Ordered root to tip. One marker works; two or more reveal bend shape.
+    marker_ids: [1, 2]
+    normal_axis: x
+    normal_sign: 1.0
+    shear_axis: y
+    shear_sign: 1.0
+
+  - name: right_finger
+    marker_ids: [3, 4]
+    normal_axis: x
+    normal_sign: -1.0
+    shear_axis: y
+    shear_sign: 1.0
+
+output:
+  csv_path: data/flexsense.csv
+  calibration_file: calibration/force_models.json
+  json_stdout: false
+  stdout_hz: 10.0
+  udp_host: null
+  udp_port: null
+

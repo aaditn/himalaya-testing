@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexsense-so101"
+version = "0.1.0"
+description = "Camera-based deformation tracking for printed SO-101 flexure fingers"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-contrib-python>=4.8",
+  "PyYAML>=6.0",
+  # Only used for HUD text. The display degrades to OpenCV's stroked Hershey
+  # fonts without it, so it is a real dependency rather than an optional one:
+  # the fallback is silent and looks markedly worse.
+  "Pillow>=10.0",
+]
+
+[project.scripts]
+flexsense = "flexsense.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["flexsense*"]
+
