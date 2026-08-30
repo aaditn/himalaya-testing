@@ -153,8 +153,31 @@ def main():
                     return True
             return False
 
-        sizes = env.observation_size
+        # observation_size gives shape TUPLES, e.g. {"state": (105,)}.
+        sizes = {k: (v[0] if isinstance(v, tuple) else v)
+                 for k, v in env.observation_size.items()}
         warm_params = list(warm_params)
+
+        # The observation NORMALIZER is per-dimension too, and must grow with
+        # the observation or brax fails broadcasting (128, 105) against (103,).
+        # Pad mean with 0 and std with 1 so the new dims pass through
+        # unnormalised until running statistics accumulate for them.
+        nrm = warm_params[0]
+        def _grow(field, fill):
+            cur = getattr(nrm, field)
+            out = {}
+            for k, v in cur.items():
+                want = sizes.get(k, v.shape[0])
+                if v.shape[0] < want:
+                    n = want - v.shape[0]
+                    v = _jp.concatenate([v, _jp.full((n,), fill, v.dtype)])
+                out[k] = v
+            return out
+        warm_params[0] = nrm.replace(
+            mean=_grow("mean", 0.0),
+            std=_grow("std", 1.0),
+            summed_variance=_grow("summed_variance", 0.0))
+        print("    padded observation normalizer")
         _pad_first_layer(warm_params[1], sizes["state"])
         if len(warm_params) > 2:
             _pad_first_layer(warm_params[2], sizes["privileged_state"])

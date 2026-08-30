@@ -106,6 +106,19 @@ def surface_z(x, slope_rad):
     return -x * np.tan(slope_rad)
 
 
+def terrain_bank():
+    """(n_variants, nrow*ncol) heightfields, or None if no bank was generated.
+
+    Values are NORMALISED 0..1 exactly as mujoco stores hfield_data; the geom's
+    z size scales them to metres. Written by scripts/make_terrain_bank.py.
+    """
+    p = ASSETS / "terrain_bank.npy"
+    if not p.exists():
+        return None
+    import jax.numpy as jnp  # local: scene.py is numpy-only for the viewer
+    return jnp.asarray(np.load(p.as_posix()))
+
+
 def route_lines(slope_rad=0.0):
     """(n_routes, steps, 2) WORLD x,y centreline of every corridor, or None.
 
