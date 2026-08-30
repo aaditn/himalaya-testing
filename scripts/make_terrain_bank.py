@@ -55,6 +55,9 @@ def main():
     ap.add_argument("--width-max", type=float, default=0.90)
     ap.add_argument("--wall-min", type=float, default=0.85)
     ap.add_argument("--wall-max", type=float, default=1.35)
+    ap.add_argument("--base-relief", type=float, default=1.00,
+                    help="height of the terrain the channels are cut into. "
+                         "Above ~1.4 the map becomes mostly wall.")
     ap.add_argument("--rough-min", type=float, default=0.06)
     ap.add_argument("--rough-max", type=float, default=0.18)
     a = ap.parse_args()
@@ -69,7 +72,10 @@ def main():
         # decides whether the legs have room to spare.
         mr.CHANNEL_W = w
         mr.CHANNEL_DEPTH = wall
-        mr._PEAK_M = a.z_scale - 0.10
+        # Base terrain height is NOT the z_scale budget. Setting it to the
+        # full budget made the map 64% wall by area; the channel depth is what
+        # provides bracing height, cut down from a modest surface.
+        mr._PEAK_M = a.base_relief
         h, _ = mr.route(res=a.res, lane_w=max(w, 0.6), rough=rough,
                         lane_rough=rough * 0.8, seed=i)
         # SHIFT the map so a corridor passes through the spawn.
@@ -79,11 +85,32 @@ def main():
         # wall at ~1.0 m relief, and those episodes died on step 1. Rolling the
         # field laterally is free -- the terrain is statistically homogeneous
         # across y -- and guarantees every variant is spawnable.
+        # Roll ROWS so a channel passes through the spawn.
+        #
+        # Channels run along COLUMNS (world x, up the slope) and vary in row, so
+        # the free axis is the row axis: rolling rows slides the whole set of
+        # corridors sideways without disturbing their up-slope continuity.
         sr = int((SPAWN_Y + 6.0) / 12.0 * a.res)
         sc_ = int((SPAWN_X + 6.0) / 12.0 * a.res)
-        # Find the lowest cell in the spawn's column, and roll it to the spawn row.
-        col = h[:, sc_]
-        h = np.roll(h, sr - int(np.argmin(col)), axis=0)
+        # Pick the roll that leaves the SPAWN CELL lowest, rather than rolling
+        # the column's global minimum onto the spawn row. With four channels a
+        # column has four minima, and the deepest is rarely the one nearest the
+        # spawn -- measured, that put 13 of 16 variants on a wall.
+        # Shift the field in BOTH axes so the spawn cell sits on a channel
+        # floor at the global minimum height, not merely at the low point of a
+        # column that happens to be high everywhere. Rolling rows alone left
+        # 13 of 16 variants with 0.6 m of relief under the robot, because the
+        # spawn's column was elevated along its whole length.
+        flat = int(np.argmin(h))
+        lo_r, lo_c = flat // a.res, flat % a.res
+        h = np.roll(h, sr - lo_r, axis=0)
+        h = np.roll(h, sc_ - lo_c, axis=1)
+        # Normalise to the z budget LAST. The carve digs below zero and adds to
+        # the total range, so a field that measured 1.0 m before carving can
+        # exceed the scene's z_scale afterwards and clip in the PNG.
+        h = h - h.min()
+        if h.max() > 0:
+            h = h * (a.z_scale * 0.95 / h.max())
         # Store NORMALISED, the way mujoco reads hfield_data: 0..1 scaled by
         # the geom's z size. Writing metres here would silently multiply the
         # relief by z_scale again.

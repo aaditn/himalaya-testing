@@ -33,7 +33,12 @@ import numpy as np
 
 # Total relief, metres. Must not exceed the hfield z_scale in the scene XML
 # (size="6 6 <z_scale> 1.0"), or the PNG clips and the peaks flatten to a mesa.
-_PEAK_M = 2.20
+# 1.00, not 2.20. At 2.20 the base terrain was 64% wall by area -- the map was
+# a solid massif with slots cut through it, and the "walls" beside a corridor
+# were just the parts that had not been carved. At 1.00 it is 17% wall: banks
+# alongside walkable ground. The bracing height comes from CHANNEL_DEPTH
+# cutting DOWN from that surface, not from the surface being tall.
+_PEAK_M = 1.00
 # Corridor carved INTO the terrain. Depth sets the minimum wall height either
 # side; the G1's shoulder is at 1.09 m and its arm reaches 0.46 m, so a wall
 # 0.84-1.34 m tall puts a palm near shoulder height. CHANNEL_W is the flat
@@ -255,6 +260,17 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
     # Median, not blur: removes the spikes, leaves the walls standing.
     h = _despike(h, k=_BLUR_K, passes=_DESPIKE_PASSES)
 
+  h -= h.min()
+  # Normalise to the scene's z_scale budget. The XML declares the hfield as
+  # size="6 6 1.10 1.0", so a PNG is written as h/z_scale clipped to [0,1] --
+  # anything above 1.10 m does not become a taller wall, it becomes a FLAT
+  # PLATEAU where the clip bites, silently replacing the terrain's top with a
+  # mesa. Rescaling here keeps the shape and lets the XML own the height.
+  peak = float(h.max())
+  if peak > 0 and _PEAK_M > 0:
+    h *= _PEAK_M / peak
+
+
   # CARVE the corridors into the terrain, rather than building walls around
   # them.
   #
@@ -269,17 +285,51 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
   # Cutting the channel out instead makes the walls whatever the surrounding
   # terrain already is, and CHANNEL_DEPTH is a floor on how tall they are. The
   # lane floor stays where the route was, so the walkable opening is unchanged.
+  # Carve the channels AFTER the peak renormalisation, not before.
+  #
+  # Carving first meant the cut got scaled back up with everything else: four
+  # channels each removing ~1.1 m left the uncut strips between them as the
+  # tallest thing on the map, and *= _PEAK_M/peak then stretched those strips
+  # into 2 m ridges running the full length. The result was a map that was
+  # mostly wall with a few slots through it -- the walls had become dividers
+  # rather than banks.
+  #
+  # Carving last means CHANNEL_DEPTH is metres of actual depth below the
+  # surrounding surface, and that surface keeps the shape route() built.
   if CHANNEL_DEPTH > 0.0:
-    lat = np.arange(res)[None, :]
+    # Index ROWS, not columns.
+    #
+    # This was np.arange(res)[None, :], which makes dist vary across COLUMNS
+    # with the centreline indexed by ROW -- so c[row] set the channel's column
+    # at that row and the channel ran along rows. Grid rows are world y, and
+    # the slope descends with world x, so those were CONTOUR ditches around the
+    # mountain: dividers spanning the full width with no path up. Exactly the
+    # row/column swap that had to be fixed in the route tracer earlier, in a
+    # different place.
+    lat = np.arange(res)[:, None]
     _carved = []
     for r in range(n_routes):
-      c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + (res / n_routes) * (r + 0.5)
+      # Inset the channel bands so every route keeps a wall on BOTH sides.
+      #
+      # Spacing them at res/n_routes*(r+0.5) with a +/-23 cell wiggle put route
+      # 0 as far as column 9. A channel needs CHANNEL_WALL_W (0.7 m = 15 cells)
+      # of room either side to build its bank, so the outermost routes ran off
+      # the map: no wall on the outer side, and the carve clipped, which is why
+      # that path stopped short of the top.
+      margin = CHANNEL_WALL_W / cell + CHANNEL_W / cell
+      usable = res - 2.0 * margin
+      centre = margin + usable * (r + 0.5) / n_routes
+      c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + centre
+      # Hard clamp: the wiggle must not undo the inset.
+      c = np.clip(c, margin, res - 1.0 - margin)
       # Remember exactly where this channel was cut. A greedy tracer cannot
       # find it afterwards -- it will not step down into a 1.1 m trench -- and
       # a re-run of _smooth_path draws different numbers. These ARE the
       # corridors, so they are the centrelines.
       _carved.append(c.copy())
-      dist = np.abs(lat - c[:, None]) * cell
+      # c[col] is the channel's ROW at that column, so the channel runs along
+      # columns -- world x -- which is up the slope.
+      dist = np.abs(lat - c[None, :]) * cell
       # Width and depth VARY ALONG THE CHANNEL, they are not constants.
       #
       # A corridor of fixed width lets the policy identify which map it is on
@@ -292,8 +342,8 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
       # _wander returns a slow random profile with mean 1.0, the same generator
       # the lane width uses, so the variation reads as terrain rather than
       # noise.
-      w_prof = _wander(CHANNEL_W_VARY)[:, None]
-      d_prof = _wander(CHANNEL_DEPTH_VARY, octaves=3)[:, None]
+      w_prof = _wander(CHANNEL_W_VARY)[None, :]
+      d_prof = _wander(CHANNEL_DEPTH_VARY, octaves=3)[None, :]
       half_w = (CHANNEL_W / 2.0) * w_prof
       depth = CHANNEL_DEPTH * d_prof
       # Flat floor out to half the local width, then a smooth ramp back up to
@@ -302,15 +352,15 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
       cut = depth * (1.0 - t * t * (3.0 - 2.0 * t))
       h = h - cut
 
-  h -= h.min()
-  # Normalise to the scene's z_scale budget. The XML declares the hfield as
-  # size="6 6 1.10 1.0", so a PNG is written as h/z_scale clipped to [0,1] --
-  # anything above 1.10 m does not become a taller wall, it becomes a FLAT
-  # PLATEAU where the clip bites, silently replacing the terrain's top with a
-  # mesa. Rescaling here keeps the shape and lets the XML own the height.
-  peak = float(h.max())
-  if peak > 0 and _PEAK_M > 0:
-    h *= _PEAK_M / peak
+  # Re-baseline AFTER carving, and only then.
+  #
+  # The carve digs below zero -- measured h.min() = -2.00 m -- and the PNG
+  # writer clips negatives to black, which flattens the channel floors into one
+  # hard plane and eats most of the depth. Shifting up here keeps the full
+  # carved profile. Do NOT rescale to _PEAK_M again: that is what shrank a 1.0 m
+  # carve to 0.05 m when the peak dropped.
+  h = h - h.min()
+
 
   globals()["_LAST_CHANNELS"] = (
       np.array(_carved) if CHANNEL_DEPTH > 0.0 and n_routes else None)
