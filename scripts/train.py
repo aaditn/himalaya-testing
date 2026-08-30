@@ -92,6 +92,11 @@ def main():
     history = []
     t0 = time.time()
 
+    def save_checkpoint(step, make_policy, params):
+        del step, make_policy  # only the params are needed
+        from brax.io import model as brax_model
+        brax_model.save_params(str(out / "policy"), params)
+
     def progress(step, metrics):
         row = {
             "step": int(step),
@@ -144,6 +149,13 @@ def main():
         ),
         randomization_fn=randomizer,
         wrap_env_fn=wrapper.wrap_for_brax_training,
+        # Save at every eval, not just at the end. Without this a run is
+        # all-or-nothing: brax hands back the params only on completion, so
+        # killing a 300M-step job early leaves metrics.json and no policy,
+        # and there is nothing to render. Overwrites one file rather than
+        # keeping every eval -- the latest is what gets watched, and the
+        # checkpoints are 2 MB each.
+        policy_params_fn=save_checkpoint,
         progress_fn=progress,
         seed=0,
     )
