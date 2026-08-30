@@ -32,12 +32,12 @@ SCENES = {
 # --- spawn -----------------------------------------------------------------
 # Where the robot starts on the mountain, in metres. +x is UPHILL on the tilted
 # floor, so a smaller x is further down the slope.
-SPAWN = (4.0, 5.5)
+SPAWN = (4.41, 1.54)
 # Heading on a slope, radians about world +z. pi faces the robot up the hill:
 # the body tilt below rotates it about +Y to stand perpendicular to the surface,
 # which pitches its forward axis DOWN the hill, so without this a forward
 # velocity command is an instruction to descend.
-SPAWN_YAW = 0.5 * np.pi
+SPAWN_YAW = 3.910
 SPAWN_YAW_JITTER = 0.3
 # Half-width of the grid sampled to find the rock under the spawn. The grid
 # takes the HIGHEST cell in the span, so a wide span lifts the robot onto a
@@ -106,15 +106,25 @@ def surface_z(x, slope_rad):
     return -x * np.tan(slope_rad)
 
 
-def route_lines():
-    """(n_routes, steps, 2) world x,y centreline of every corridor, or None.
+def route_lines(slope_rad=0.0):
+    """(n_routes, steps, 2) WORLD x,y centreline of every corridor, or None.
 
-    Traced out of the heightfield itself by make_route.py, so it cannot
-    disagree with the terrain. Measured: 0.06-0.09 m mean relief along these
-    lines against a 0.22 m map mean.
+    make_route.py traces these in heightfield GRID space, which is the floor
+    geom's local frame. On a tilted floor that is not world space: the geom is
+    rotated about +Y, so local x maps to world x/cos(slope). Skipping that
+    conversion put every route -- and every relief measurement taken against
+    one -- at the wrong place on the hill, by more than a metre at 15 degrees.
     """
     p = ASSETS / "mountain_lines.npy"
-    return np.load(p.as_posix()) if p.exists() else None
+    if not p.exists():
+        return None
+    # Already WORLD space: scripts/trace_routes.py ray-casts the compiled
+    # geometry, so no frame conversion belongs here. An earlier version read
+    # mountain.png directly and indexed it in the heightfield's LOCAL frame,
+    # which on a tilted floor is off by more than a metre at 15 degrees -- and
+    # because the x and y errors differ, it ROTATES the line. That is what put
+    # the reward 90 degrees off the visible corridor.
+    return np.load(p.as_posix())
 
 
 def route_tangent(lines, xy):
@@ -132,8 +142,16 @@ def route_tangent(lines, xy):
     t = lines[ri, nxt] - lines[ri, prv]
     nrm = np.linalg.norm(t)
     if nrm < 1e-9:
-        return np.array([1.0, 0.0]), float(d[k])
-    return t / nrm, float(d[k])
+        return np.array([-1.0, 0.0]), float(d[k])
+    t = t / nrm
+    # ORIENT IT UP-SLOPE. A traced line is the same path in either direction,
+    # and which way the tracer happened to walk is arbitrary -- as written it
+    # came out pointing downhill, so the reward paid for descending the
+    # corridor. The floor descends with world x (surface_z = -x*tan), so
+    # up-slope is -x, and any tangent with a positive x component is reversed.
+    if t[0] > 0.0:
+        t = -t
+    return t, float(d[k])
 
 
 def lane_mouths():

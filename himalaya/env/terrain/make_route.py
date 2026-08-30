@@ -43,6 +43,15 @@ _WALL_STEEP = 2.1
 # Final smoothing radius in cells. 1 removes single-cell spikes; 2 also flattens
 # the corridor walls until the route stops reading as a route.
 _BLUR_K = 1
+# Route shaping. DRIFT_CELLS_PER_COL is how far across the hill a route moves
+# per step up it -- the traverse angle. BIAS_W is how firmly it holds that line
+# against a lower cell nearby, in metres of terrain height per band-width of
+# lateral error.
+DRIFT_CELLS_PER_COL = 1.4
+BIAS_W = 0.45
+# Fraction of the map's width each route may wander across. Below ~0.5 there is
+# not enough lateral room to traverse and the line goes straight up.
+ROUTE_SPAN = 0.75
 # Lane bump size. "coarse" samples a res/16 lattice -- features ~1 m across,
 # wider than the 0.18 m foot, so a foot lands on a slope. "fine" samples the
 # same res/4 lattice the wall texture uses, which is the original behaviour and
@@ -301,22 +310,78 @@ def write_png(path, z_scale, **kw):
   # Following the trough in h itself cannot drift from the terrain, because it
   # IS the terrain. For each route band, walk up the slope taking the lowest
   # cell within the band at each step.
+  # Walk along the FALL LINE, not along the contour.
+  #
+  # This previously scanned grid ROWS (world y) and took the lowest cell in
+  # each -- which traces contour lines. They sat in real troughs (0.06-0.09 m
+  # relief against a 0.22 m map mean), so they looked right, but measured end
+  # to end they gained between -0.19 m and +0.31 m over 12 m: they were ditches
+  # AROUND the mountain, not routes up it. Rewarding progress along them
+  # rewards a lap.
+  #
+  # The slope descends with world x (surface_z = -x*tan), and grid COLUMNS are
+  # world x, so scanning columns and taking the lowest cell in each gives a
+  # line that crosses the hillside while making net upward progress -- a
+  # switchback, which is what a real route is.
+  # Each route gets a PREFERRED DIRECTION across the hill, so it reads as a
+  # deliberate line rather than the steepest available cell.
+  #
+  # Taking the lowest cell in every column alone drags the trace almost
+  # straight up the fall line -- measured, 0.76 to 0.90 uphill directness,
+  # where 1.0 is charging the gradient. A switchback wants 0.4-0.7: climbing
+  # steadily while crossing the slope. The bias below adds a lateral drift and
+  # penalises departing from it, so the route commits to a traverse and only
+  # leaves it where the terrain genuinely offers something better.
+  # Routes SHARE the hillside rather than owning a quarter of it each.
+  #
+  # Confining a route to res/n_routes = 64 cells gives it 3 m of lateral room
+  # while it climbs 12 m, which caps the traverse angle no matter what the
+  # drift is -- measured, directness stayed at 0.78-0.88 across a 5x change in
+  # drift and the line climbed out of its trough. A switchback needs to cross
+  # most of the hill, so each route is given ROUTE_SPAN of the map, offset so
+  # the four still start in different places.
   lines = []
-  band_w = res // n_routes
+  span = int(res * ROUTE_SPAN)
   for r in range(n_routes):
-    lo, hi = r * band_w, (r + 1) * band_w
+    centre = int(res * (r + 0.5) / n_routes)
+    lo = max(0, centre - span // 2)
+    hi = min(res, centre + span // 2)
+    # Alternate the drift direction per route, so the map has lines leaning
+    # both ways rather than four parallel diagonals.
+    drift = (1.0 if r % 2 == 0 else -1.0) * DRIFT_CELLS_PER_COL
     ys = []
-    for row in range(res):
-      col = lo + int(np.argmin(h[row, lo:hi]))
-      ys.append(col)
+    want = (lo + hi) / 2.0
+    for col in range(res):
+      window = h[lo:hi, col].copy()
+      # Cost = terrain height + how far this row strays from where the drift
+      # says the route should be by now. BIAS_W sets how strongly the line
+      # holds its heading against a tempting dip.
+      rows = np.arange(lo, hi, dtype=float)
+      cost = window + BIAS_W * np.abs(rows - want) / max(hi - lo, 1)
+      row = lo + int(np.argmin(cost))
+      ys.append(row)
+      # Advance the target, and BOUNCE off the band edges rather than clamping.
+      # Clamping pinned the target to one side for most of the trace, and the
+      # bias term then simply pulled the line straight up -- measured,
+      # directness went UP to 0.89-0.97 and the line climbed out of the trough
+      # to 0.19-0.21 m relief against a 0.22 m map mean. Bouncing gives a real
+      # zigzag: the route crosses the band, turns, and crosses back.
+      want += drift
+      if want < lo + 1:
+        want = lo + 1.0
+        drift = abs(drift)
+      elif want > hi - 2:
+        want = hi - 2.0
+        drift = -abs(drift)
     ys = np.array(ys, dtype=float)
     # Smooth so the line is a route rather than a per-row jitter between
     # equally low cells.
     k = 15
     pad = np.pad(ys, k, mode="edge")
     ys = np.convolve(pad, np.ones(2 * k + 1) / (2 * k + 1), mode="valid")
-    lane_y = (np.arange(res) - res / 2.0) * cell     # world y = grid ROW
-    lane_x = (ys - res / 2.0) * cell                 # world x = grid COL
+    # ys now indexes grid ROWS (world y); the scan axis is COLUMNS (world x).
+    lane_x = (np.arange(res) - res / 2.0) * cell     # world x = grid COL
+    lane_y = (ys - res / 2.0) * cell                 # world y = grid ROW
     lines.append(np.stack([lane_x, lane_y], axis=1))
   lines = np.array(lines)
   np.save(str(path).replace(".png", "_centre.npy"), lines[:, 0, 1])
