@@ -119,7 +119,15 @@ def main():
             if k.startswith("eval/episode_reward/"):
                 row[k.split("/")[-1]] = round(float(v), 4)
         history.append(row)
-        (out / "metrics.json").write_text(json.dumps(history, indent=1))
+        # Best-effort: runs/ lives on an HF bucket FUSE mount whose mkdir is
+        # eventually consistent -- a transient ENOENT here killed two full
+        # training runs (headup-11, real37b). A lost metrics snapshot costs
+        # nothing; a lost run costs a GPU-hour.
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "metrics.json").write_text(json.dumps(history, indent=1))
+        except OSError as e:
+            print(f"  metrics write failed ({e}); continuing", flush=True)
         print(f"  {row['step']:>11,}  reward={row['reward']:8.2f}  "
               f"len={row['episode_len']:7.1f}  ({row['elapsed_s']:.0f}s)", flush=True)
 
@@ -158,7 +166,16 @@ def main():
     make_inference_fn, params, _ = train(environment=env, eval_env=eval_env)
 
     from brax.io import model as brax_model
-    brax_model.save_params(str(out / "policy"), params)
+    # The bucket mount can hiccup; the policy is the only unrecoverable
+    # artifact, so retry rather than die at the finish line.
+    for attempt in range(5):
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            brax_model.save_params(str(out / "policy"), params)
+            break
+        except OSError as e:
+            print(f"  policy save failed (attempt {attempt+1}: {e})", flush=True)
+            time.sleep(5)
     print(f"\nsaved -> {out/'policy'}   ({time.time()-t0:.0f}s total)")
 
 
