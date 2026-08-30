@@ -521,9 +521,23 @@ class Joystick(g1_base.G1Env):
       # the case the stock height-free check misses entirely.
       fall_termination = self.get_gravity(data, "torso")[-1] < self.MAX_TILT
       fall_termination |= data.qpos[2] < self.MIN_TORSO_HEIGHT
-    contact_termination = data.sensordata[
-        self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
-    ] > 0
+    # MODIFIED: foot-to-foot contact does not end a climbing episode.
+    #
+    # Inherited from the walking task, where the feet touching means the legs
+    # have crossed. On a slope a narrow stance is CORRECT -- it keeps the
+    # centre of mass over the feet -- and this check fired within ~6 steps in
+    # 60 of 60 episodes, killing every attempt before the policy could do
+    # anything. Neither the tilt nor the clearance check ever fired; this was
+    # the entire reason climbing episodes were so short.
+    #
+    # The shin checks below stay: a foot against the opposite SHIN is a real
+    # tangle at any slope.
+    if self._slope_rad != 0.0:
+      contact_termination = jp.zeros((), dtype=bool)
+    else:
+      contact_termination = data.sensordata[
+          self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
+      ] > 0
     contact_termination |= data.sensordata[
         self._mj_model.sensor_adr[self._left_foot_right_shin_found_sensor]
     ] > 0
