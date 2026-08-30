@@ -263,6 +263,20 @@ def main():
         large_foot_step_bonus = np.asarray([
             item.metrics["climb/large_foot_step_bonus"] for item in rollout
         ])
+        foot_swing_contact_metric = np.asarray([
+            item.metrics["climb/foot_swing_contact_fraction"]
+            for item in rollout
+        ])
+        hand_swing_contact_metric = np.asarray([
+            item.metrics["climb/hand_swing_contact_fraction"]
+            for item in rollout
+        ])
+        support_exchange_metric = np.asarray([
+            item.metrics["climb/support_exchange"] for item in rollout
+        ])
+        overspeed_ratio = np.asarray([
+            item.metrics["climb/overspeed_ratio"] for item in rollout
+        ])
         print("  rollout diagnostics:")
         print(
             f"    uphill final/max/min={uphill[-1]:+.3f}/"
@@ -296,6 +310,12 @@ def main():
             f"{np.ptp(motor_targets[:, leg_indices], axis=0)}; "
             f"actual p2p="
             f"{np.ptp(qpos[:, 7 + np.asarray(leg_indices)], axis=0)}"
+        )
+        print(
+            f"    phase contact mean: foot={foot_swing_contact_metric.mean():.3f} "
+            f"hand={hand_swing_contact_metric.mean():.3f}; "
+            f"support exchange={support_exchange_metric.mean():.3f}; "
+            f"overspeed ratio max={overspeed_ratio.max():.2f}x"
         )
         print(
             f"    arm target p2p={np.ptp(motor_targets[:, arm_indices], axis=0)}; "

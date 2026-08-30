@@ -141,6 +141,19 @@ is gated by positive displacement. A -0.05 time cost and termination after
 three seconds without a new 5 mm progress checkpoint discourage settling in
 place; losing 0.35 m from the episode high also terminates the episode.
 
+Rollout diagnostics after the first traction continuation exposed a different
+failure mode: the feet remained loaded through 70-76% of their scheduled swing,
+one palm carried contact almost twice as often as the other, and peak velocity
+reached more than seven times the command before the pelvis collapsed. The
+environment now rewards terrain-normal swing-foot clearance, penalizes hand or
+foot contact during its scheduled swing, and explicitly rewards keeping the
+opposite diagonal loaded during exchange. Diagonal synchronization/support
+weights are stronger but remain subordinate to displacement. Positive
+displacement credit saturates at the commanded speed, and a quadratic overspeed
+cost begins above 1.25x command, preventing a high-speed lunge from masquerading
+as a successful crawl. The crawl cadence is slowed to 0.55-0.75 Hz to provide
+time for unloading and replanting.
+
 Large leg steps receive an additional foot-only, one-time touchdown bonus. It
 uses uphill plant advance normalized by the 20 cm target, squares that value,
 and compensates for the environment timestep. A 10 cm qualifying step earns
@@ -197,8 +210,9 @@ pose: its four-second 5° check had one fall and essentially zero net progress.
 This pose is provided for pre-training review, not as a trained result.
 
 The curriculum in `configs/curriculum.json` first learns support exchange on a
-5° grade with 5 mm relief and no boulders, then transfers to a smooth 12°
-grade, and only then introduces 6 cm relief and the rocks. It subsequently
+fixed-physics 5° grade with 5 mm relief and no boulders, then repeats that stage
+with domain randomization before transferring to a smooth 12° grade. Only then
+does it introduce 6 cm relief and the rocks. It subsequently
 progresses through 20°, 28°, 35°, and a terminal 42° stage while increasing
 terrain relief to 15 cm and desired hand loading to 40%. Hand microspikes retain
 0.95 tangential friction while the foot microspikes use 1.90, exactly twice the

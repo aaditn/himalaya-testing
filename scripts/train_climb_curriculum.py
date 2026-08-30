@@ -41,12 +41,15 @@ def main() -> None:
             "--foot-friction", str(2.0 * stage["spike_friction"]),
             "--hand-load", str(stage["target_hand_load_share"]),
             "--speed", str(stage["target_uphill_speed"]),
-            "--seed", str(args.seed + index),
+            "--num-evals", str(stage["num_evals"]),
+            "--seed", str(stage.get("terrain_seed", args.seed + index)),
         ]
         if restore:
             command.extend(["--restore", str(restore.resolve())])
         if not stage.get("boulders_enabled", True):
             command.append("--no-boulders")
+        if not stage.get("domain_randomization", True):
+            command.append("--no-randomization")
         subprocess.run(command, check=True)
         restore = latest_checkpoint(Path("runs") / name / "checkpoints")
         if restore is None:

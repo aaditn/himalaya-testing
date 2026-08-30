@@ -101,9 +101,13 @@ def default_config() -> config_dict.ConfigDict:
               limb_touchdown_advance=0.0,
               large_foot_step=0.0,
               failed_ascent=0.0,
+              overspeed=0.0,
               crawl_height=0.0,
               mixed_support=0.0,
               foot_uphill_drive=0.0,
+              foot_swing_clearance=0.0,
+              swing_contact=0.0,
+              support_exchange=0.0,
               climb_time=0.0,
               hand_proximity=0.0,
               continuous_hand_support=0.0,
@@ -176,7 +180,8 @@ def default_config() -> config_dict.ConfigDict:
           reference_elbow_lift=0.22,
           reference_support_knee_extension=0.16,
           reference_support_elbow_push=0.14,
-          gait_frequency_range=[0.70, 0.95],
+          gait_frequency_range=[0.55, 0.75],
+          max_uphill_speed_ratio=1.25,
           stall_seconds=3.0,
           max_regression_distance=0.35,
           max_downhill_distance=1.5,
@@ -219,7 +224,7 @@ class Joystick(g1_base.G1Env):
       # every forward sample and taught PPO to minimize motion.  Keep a clear
       # fall cost, but leave enough return for a partially successful stride
       # to be better than shuffling in place.
-      scales.termination = -20.0
+      scales.termination = -25.0
       # MODIFIED: reward a completed airborne step. The stock phase-height
       # curve stays positive through nearly the whole cycle and conflicts
       # with planted crawl support, so it is disabled for climbing.
@@ -249,10 +254,20 @@ class Joystick(g1_base.G1Env):
       # advance makes a full 20 cm step worth four 10 cm steps, while the
       # episode-best plant record prevents repeated stamping from farming it.
       scales.large_foot_step = 1.0
-      scales.failed_ascent = -2.0
+      scales.failed_ascent = -3.0
+      # MODIFIED: the previous policy briefly reached 7.5x the commanded
+      # velocity, then pitched down and lost half its progress. Displacement
+      # already saturates at the commanded speed below; explicitly penalize
+      # the remaining high-speed lunge without penalizing useful acceleration.
+      scales.overspeed = -1.5
       scales.crawl_height = 0.5
       scales.mixed_support = 0.5
       scales.foot_uphill_drive = 0.8
+      # MODIFIED: dense, phase-aligned scaffolding for the failure observed in
+      # rollout diagnostics: feet remained loaded through 70-76% of swing.
+      scales.foot_swing_clearance = 0.8
+      scales.swing_contact = -0.8
+      scales.support_exchange = 0.8
       scales.climb_time = -0.05
       scales.hand_proximity = 0.05
       scales.continuous_hand_support = 0.1
@@ -264,8 +279,8 @@ class Joystick(g1_base.G1Env):
       scales.hand_phase = 0.0
       scales.hand_lift_height = 0.5
       scales.hand_lift_target = 0.2
-      scales.diagonal_swing_sync = 0.5
-      scales.diagonal_support = 0.3
+      scales.diagonal_swing_sync = 0.75
+      scales.diagonal_support = 0.5
       scales.hand_load_share = 0.3
       scales.hand_slip = -0.35
       # MODIFIED: positive, progress-weighted clearance shaping plus an
@@ -675,6 +690,10 @@ class Joystick(g1_base.G1Env):
     metrics["climb/posture_gate"] = jp.zeros(())
     metrics["climb/steps_without_progress"] = jp.zeros(())
     metrics["climb/foot_uphill_force"] = jp.zeros(())
+    metrics["climb/foot_swing_contact_fraction"] = jp.zeros(())
+    metrics["climb/hand_swing_contact_fraction"] = jp.zeros(())
+    metrics["climb/support_exchange"] = jp.zeros(())
+    metrics["climb/overspeed_ratio"] = jp.zeros(())
     metrics["climb/hand_contact_fraction"] = jp.zeros(())
     metrics["climb/hand_phase"] = jp.zeros(())
     metrics["climb/hand_lift_height"] = jp.zeros(())
@@ -1152,7 +1171,7 @@ class Joystick(g1_base.G1Env):
     normalized_progress = jp.clip(
         mountain_progress / self._config.climb.target_uphill_speed,
         -1.5,
-        2.0,
+        1.0,
     )
     positive_progress = jp.maximum(normalized_progress, 0.0)
     palm_pos = data.site_xpos[self._hands_site_id]
@@ -1200,7 +1219,7 @@ class Joystick(g1_base.G1Env):
         new_high_delta
         / (self._config.climb.target_uphill_speed * self.dt),
         0.0,
-        2.0,
+        1.0,
     ) * posture_gate
     new_max = jp.maximum(info["max_uphill_position"], uphill_position)
     current_waypoint = jp.floor(
@@ -1273,6 +1292,7 @@ class Joystick(g1_base.G1Env):
     # The previous `cos(phase) > cos(pi*duty)` did the reverse: it requested a
     # planted palm at maximum swing height and prevented diagonal limb motion.
     desired_hand_contact = jp.cos(phase) < jp.cos(jp.pi * (1.0 - duty))
+    desired_foot_swing = jp.cos(info["phase"]) > 0.0
     schedule_match = jp.mean(hand_contact == desired_hand_contact)
     hand_clearance = jp.maximum(
         palm_pos @ self._slope_normal - self._terrain_plane_offset, 0.0
@@ -1321,6 +1341,40 @@ class Joystick(g1_base.G1Env):
     diagonal = (hand_contact[0] & contact[1]) | (
         hand_contact[1] & contact[0]
     )
+    foot_clearance = jp.maximum(
+        data.site_xpos[self._feet_site_id] @ self._slope_normal
+        - self._terrain_plane_offset,
+        0.0,
+    )
+    foot_lift_fraction = jp.clip(
+        foot_clearance / self._config.reward_config.max_foot_height,
+        0.0,
+        1.0,
+    )
+    foot_lift_shape = jp.square(foot_lift_fraction) * (
+        3.0 - 2.0 * foot_lift_fraction
+    )
+    swing_count = jp.maximum(
+        jp.sum(desired_foot_swing.astype(data.qpos.dtype)), 1.0
+    )
+    foot_swing_clearance = jp.sum(
+        foot_lift_shape * desired_foot_swing * (~contact)
+    ) / swing_count
+    foot_swing_contact = jp.sum(
+        contact * desired_foot_swing
+    ) / swing_count
+    desired_hand_swing = ~desired_hand_contact
+    hand_swing_count = jp.maximum(
+        jp.sum(desired_hand_swing.astype(data.qpos.dtype)), 1.0
+    )
+    hand_swing_contact = jp.sum(
+        hand_contact * desired_hand_swing
+    ) / hand_swing_count
+    # When one diagonal pair swings, the other diagonal must remain loaded.
+    # Index i pairs swing foot i with support hand i and support foot 1-i.
+    support_exchange = jp.sum(
+        desired_foot_swing * hand_contact * contact[::-1]
+    ) / swing_count
     hand_slip_speed = jp.sqrt(
         jp.sum(jp.square(tangent_vel) * hand_contact) + 1e-8
     )
@@ -1358,6 +1412,7 @@ class Joystick(g1_base.G1Env):
         "limb_touchdown_advance": limb_touchdown_advance,
         "large_foot_step": large_foot_step,
         "failed_ascent": failed_ascent,
+        "overspeed": self._cost_uphill_overspeed(uphill_velocity),
         "crawl_height": jp.exp(
             -jp.square(
                 pelvis_clearance
@@ -1366,6 +1421,9 @@ class Joystick(g1_base.G1Env):
         ),
         "mixed_support": mixed_support.astype(data.qpos.dtype),
         "foot_uphill_drive": foot_uphill_drive,
+        "foot_swing_clearance": foot_swing_clearance,
+        "swing_contact": foot_swing_contact + hand_swing_contact,
+        "support_exchange": support_exchange,
         "climb_time": jp.ones(()),
         "hand_proximity": (
             jp.mean(jp.exp(-plane_dist / 0.18)) * progress_gate
@@ -1405,6 +1463,12 @@ class Joystick(g1_base.G1Env):
         "steps_without_progress"
     ].astype(data.qpos.dtype)
     metrics["climb/foot_uphill_force"] = jp.mean(foot_uphill_force)
+    metrics["climb/foot_swing_contact_fraction"] = foot_swing_contact
+    metrics["climb/hand_swing_contact_fraction"] = hand_swing_contact
+    metrics["climb/support_exchange"] = support_exchange
+    metrics["climb/overspeed_ratio"] = jp.maximum(
+        uphill_velocity / self._config.climb.target_uphill_speed, 0.0
+    )
     metrics["climb/hand_contact_fraction"] = jp.mean(
         hand_contact.astype(data.qpos.dtype)
     )
@@ -1476,6 +1540,15 @@ class Joystick(g1_base.G1Env):
         * posture_gate
         * mixed_support.astype(speed_fraction.dtype)
     )
+
+  def _cost_uphill_overspeed(self, uphill_velocity: jax.Array) -> jax.Array:
+    """Quadratic cost only above the stable command-speed envelope."""
+    excess = jp.maximum(
+        uphill_velocity / self._config.climb.target_uphill_speed
+        - self._config.climb.max_uphill_speed_ratio,
+        0.0,
+    )
+    return jp.clip(jp.square(excess), 0.0, 4.0)
 
   def _cost_joint_deviation_hip(
       self, qpos: jax.Array, cmd: jax.Array

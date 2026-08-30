@@ -54,6 +54,8 @@ class HimalayaClimbTest(unittest.TestCase):
                 "diagonal_swing_sync",
                 "diagonal_support",
                 "hand_load_share",
+                "foot_swing_clearance",
+                "support_exchange",
             )
         )
         self.assertGreater(movement_scales, 4 * support_scales)
@@ -67,10 +69,10 @@ class HimalayaClimbTest(unittest.TestCase):
             self.env._config.reward_config.scales.assisted_uphill_progress, 1.5
         )
         self.assertEqual(
-            self.env._config.reward_config.scales.failed_ascent, -2.0
+            self.env._config.reward_config.scales.failed_ascent, -3.0
         )
         self.assertEqual(
-            self.env._config.reward_config.scales.termination, -20.0
+            self.env._config.reward_config.scales.termination, -25.0
         )
         self.assertEqual(self.env._config.climb.waypoint_interval, 0.25)
         self.assertEqual(self.env._config.climb.max_regression_distance, 0.35)
@@ -81,7 +83,7 @@ class HimalayaClimbTest(unittest.TestCase):
             self.env._config.reward_config.max_hand_height, 0.24384
         )
         self.assertEqual(
-            list(self.env._config.climb.gait_frequency_range), [0.70, 0.95]
+            list(self.env._config.climb.gait_frequency_range), [0.55, 0.75]
         )
         self.assertEqual(
             self.env._config.climb.hand_contact_duty_factor, 0.60
@@ -97,6 +99,18 @@ class HimalayaClimbTest(unittest.TestCase):
         )
         self.assertGreater(
             self.env._config.reward_config.scales.hand_lift_height, 0.0
+        )
+        self.assertGreater(
+            self.env._config.reward_config.scales.foot_swing_clearance, 0.0
+        )
+        self.assertLess(
+            self.env._config.reward_config.scales.swing_contact, 0.0
+        )
+        self.assertGreater(
+            self.env._config.reward_config.scales.support_exchange, 0.0
+        )
+        self.assertLess(
+            self.env._config.reward_config.scales.overspeed, 0.0
         )
         self.assertGreater(
             self.env._config.reward_config.scales.knee_clearance, 0.0
@@ -245,6 +259,13 @@ class HimalayaClimbTest(unittest.TestCase):
             0.0,
         )
         self.assertAlmostEqual(
+            float(self.env._cost_uphill_overspeed(target_speed)), 0.0
+        )
+        self.assertAlmostEqual(
+            float(self.env._cost_uphill_overspeed(2.0 * target_speed)),
+            0.75**2,
+        )
+        self.assertAlmostEqual(
             float(self.env._reward_uphill_velocity(
                 np.array(0.5 * target_speed), np.array(1.0), supported
             )),
@@ -270,6 +291,9 @@ class HimalayaClimbTest(unittest.TestCase):
         self.assertEqual(stages[0]["slope_degrees"], 5)
         self.assertLessEqual(stages[0]["roughness_m"], 0.005)
         self.assertFalse(stages[0]["boulders_enabled"])
+        self.assertFalse(stages[0]["domain_randomization"])
+        self.assertEqual(stages[1]["slope_degrees"], 5)
+        self.assertTrue(stages[1]["domain_randomization"])
         first_rocky = next(i for i, stage in enumerate(stages)
                            if stage["boulders_enabled"])
         self.assertGreaterEqual(first_rocky, 2)

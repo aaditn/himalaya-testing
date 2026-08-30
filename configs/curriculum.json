@@ -8,9 +8,23 @@
       "spike_friction": 0.95,
       "target_uphill_speed": 0.15,
       "target_hand_load_share": 0.25,
-      "num_timesteps": 30000000,
+      "num_timesteps": 20000000,
       "num_evals": 6,
-      "terrain_seed": 5
+      "terrain_seed": 5,
+      "domain_randomization": false
+    },
+    {
+      "name": "crawl-robust-5deg",
+      "slope_degrees": 5,
+      "roughness_m": 0.005,
+      "boulders_enabled": false,
+      "spike_friction": 0.95,
+      "target_uphill_speed": 0.15,
+      "target_hand_load_share": 0.25,
+      "num_timesteps": 20000000,
+      "num_evals": 6,
+      "terrain_seed": 7,
+      "domain_randomization": true
     },
     {
       "name": "crawl-foundation-12deg",
