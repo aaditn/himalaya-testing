@@ -40,6 +40,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=200_000_000)
     ap.add_argument("--envs", type=int, default=8192)
+    ap.add_argument("--seed", type=int, default=0,
+                    help="PPO seed. Run K went NaN inside its first eval "
+                         "interval on a clean environment; a different seed "
+                         "is the first thing to try when that happens again.")
+    ap.add_argument("--num-evals", type=int, default=15,
+                    help="evals per run. Raise it on a short run to bisect "
+                         "WHEN something goes wrong -- at 15 evals over 250M "
+                         "the first interval alone is 17.8M steps.")
     ap.add_argument("--sim-dt", type=float, default=None, metavar="S",
                     help="physics timestep. Default 0.002 = 10 substeps per "
                          "0.02 s control step, and MEASURED, physics is ~100%% "
@@ -240,7 +248,8 @@ def main():
     train = functools.partial(
         ppo.train,
         num_timesteps=args.timesteps,
-        num_evals=15,
+        num_evals=args.num_evals,
+        seed=args.seed,
         episode_length=cfg.episode_length,
         num_envs=args.envs,
         batch_size=256,
@@ -289,7 +298,6 @@ def main():
         # checkpoints are 2 MB each.
         policy_params_fn=save_checkpoint,
         progress_fn=progress,
-        seed=0,
     )
 
     make_inference_fn, params, _ = train(environment=env, eval_env=eval_env)
