@@ -8,7 +8,7 @@ param(
     [string]$Timeout = "16h",
     [string]$Namespace = "",
     [string]$RunId = "",
-    [long]$TrainingTimesteps30 = 40000000,
+    [long]$TrainingTimesteps30 = 100000000,
     [long]$TrainingTimesteps35 = 100000000,
     [int]$NumEnvs = 8192,
     [int]$ValidationTrials = 64,
@@ -39,13 +39,13 @@ if ($SmokeTimesteps -le 0 -or $SmokeTimesteps -gt 10000 -or
     throw "Smoke mode is capped at 10,000 steps and 128 environments."
 }
 if ($Mode -eq "Real" -and (
-    $TrainingTimesteps30 -ne 40000000 -or
+    $TrainingTimesteps30 -ne 100000000 -or
     $TrainingTimesteps35 -ne 100000000 -or
     $NumEnvs -ne 8192 -or $ValidationTrials -ne 64 -or
     $PromotionSuccessRate30 -ne 0.80 -or
     $PromotionSuccessRate35 -ne 0.90
 )) {
-    throw "Real balance mode requires 40M steps at 30 degrees, 8192 environments, 64 trials, and an 80% four-contact occupancy gate."
+    throw "Real balance mode requires 100M steps at 30 degrees, 8192 environments, 64 trials, and an 80% four-contact occupancy gate."
 }
 if ($Launch) {
     if ([string]::IsNullOrWhiteSpace($Flavor)) {

@@ -493,20 +493,46 @@ class HimalayaG1FourContactEnv(g1_joystick.Joystick):
         self, data: mjx.Data, info: dict[str, Any],
         foot_force: jax.Array, hand_force: jax.Array,
     ) -> jax.Array:
+        """Stage-I apparent-force ZMP surrogate on a local support plane.
+
+        The support anchor uses all four force-weighted contacts.  Following
+        the HumoSlope Stage-I approximation, the plane normal comes from the
+        dominant loaded foot rather than the nominal ramp, so small roughness
+        changes the balance target without requiring brittle contact patches.
+        """
+
         positions = jp.vstack([
             data.site_xpos[self._feet_site_id],
             data.site_xpos[self._hands_site_id],
         ])
         weights = jp.hstack([foot_force, hand_force]) + 1.0e-3
         support = jp.sum(positions * weights[:, None], axis=0) / jp.sum(weights)
+        dominant_foot = jp.argmax(foot_force)
+        local_normal = data.site_xmat[self._feet_site_id][
+            dominant_foot, :, 2
+        ]
+        local_normal = local_normal / jp.maximum(
+            jp.linalg.norm(local_normal), 1.0e-6
+        )
+        # Resolve the rotation-matrix normal sign toward the nominal ramp
+        # normal so the ray/plane intersection remains consistent.
+        local_normal = jp.where(
+            jp.dot(local_normal, self._ramp_normal) < 0.0,
+            -local_normal,
+            local_normal,
+        )
         com = self._com_position(data)
         com_vel = (com - info["last_com_pos"]) / self.dt
         com_acc = (com_vel - info["last_com_vel"]) / self.dt
         apparent = jp.array([0.0, 0.0, -9.81]) - com_acc
-        denominator = jp.dot(apparent, self._ramp_normal)
+        denominator = jp.dot(apparent, local_normal)
         eps = self._config.reward_config.zmp_epsilon
-        denominator = jp.where(jp.abs(denominator) < eps, -eps, denominator)
-        t = jp.dot(support - com, self._ramp_normal) / denominator
+        denominator = jp.where(
+            jp.abs(denominator) < eps,
+            jp.where(denominator < 0.0, -eps, eps),
+            denominator,
+        )
+        t = jp.dot(support - com, local_normal) / denominator
         zmp = com + t * apparent
         return jp.exp(
             -jp.linalg.norm(zmp - support) / self._config.reward_config.zmp_sigma
