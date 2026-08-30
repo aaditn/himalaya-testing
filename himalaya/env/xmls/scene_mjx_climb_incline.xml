@@ -1,0 +1,109 @@
+<mujoco model="g1 climb incline scene">
+  <!-- The climbing task: a rough, tiltable slope.
+       Control scene: scene_mjx_climb_flat.xml (same hand pairs, flat ground).
+
+       WHY A HEIGHTFIELD AND NOT A TILTED PLANE.
+       Sliding is resisted only while mu >= tan(theta): 0.58 at 30 deg, 0.84 at
+       40 deg, 1.00 at 45 deg. The domain randomizer draws foot friction below
+       1.0 on purpose ("slippery"), so on a SMOOTH ramp at 40-45 deg no policy
+       can hold station -- gravity along the slope exceeds what friction can
+       return, and the robot slides no matter how good it is. Relief gives the
+       hands and feet something to push against, which is how steep slippery
+       climbing actually works. The roughness is therefore load-bearing physics,
+       not decoration.
+
+       NOTE: <compiler angle="radian"/> comes from g1_mjx_feetonly.xml, so the
+       euler below is RADIANS. 0.6109 rad = 35 deg, the midpoint of the
+       requested 30-45 deg band. randomize_climb.py rotates the floor per
+       environment; this value is only the compile-time default. -->
+  <include file="g1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.4" extent="1.5" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="140" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.6 0.7 0.85" rgb2="1 1 1" width="800" height="800"/>
+    <!-- https://polyhaven.com/a/rock_face -->
+    <texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="12 12" reflectance=".1"/>
+    <!-- size = radius_x radius_y elevation_z base_z. elevation 0.10 gives
+         ~10 cm of relief; the walking scene uses 0.05, which is too shallow to
+         grip on a steep slope. -->
+
+  </asset>
+
+  <worldbody>
+    <!-- A tilted PLANE, not a heightfield. PLANE/BOX generates four contacts
+         per foot; HFIELD/BOX generates one (MuJoCo warns about exactly this),
+         which turns each foot into a point that cannot resist tipping. The
+         "rough" of the surface is therefore its texture and its friction, not
+         its geometry -- and that has a hard consequence: on a smooth slope
+         nothing holds station unless mu >= tan(theta), i.e. 0.58 at 30 deg and
+         1.00 at 45 deg. randomize_climb.py draws friction across that
+         threshold on purpose, so the steep end of the range is only climbable
+         on the higher-friction draws. euler is RADIANS (compiler angle=radian):
+         0.6545 rad = 37.5 deg, the midpoint of the 30-45 band, and the angle
+         the spawn stance below was solved at. -->
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" euler="0 -0.6545 0"/>
+  </worldbody>
+
+  <!-- Hand-floor pairs and their sensors now live in g1_mjx_feetonly.xml /
+       sensor.xml (added there for the corridor task), so only the LEG pairs are
+       declared here. Redeclaring the hand pairs is a compile error ("repeated
+       name in pair"). -->
+  <contact>
+    <!-- Legs vs ground. The G1 has thigh/shin collision capsules but the stock
+         model gives them no floor pair, so with contype/conaffinity globally 0
+         they pass straight through. On flat ground that never shows, because a
+         walking policy keeps them clear. In a crawl on rough ground the limbs
+         splay and the whole body tunnels into the terrain -- measured 0.73 m of
+         "sag" at 30 deg that was really the pelvis sinking below the surface.
+         These also make knee contact a real, scorable event. -->
+    <pair name="left_thigh_floor" geom1="left_thigh" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <pair name="right_thigh_floor" geom1="right_thigh" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <pair name="left_shin_floor" geom1="left_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <pair name="right_shin_floor" geom1="right_shin" geom2="floor" condim="3" friction="0.6 0.6"/>
+  </contact>
+
+  <sensor>
+    <contact name="left_shin_floor_found" geom1="left_shin" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact name="right_shin_floor_found" geom1="right_shin" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact name="left_thigh_floor_found" geom1="left_thigh" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact name="right_thigh_floor_found" geom1="right_thigh" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <framelinvel objtype="site" objname="left_palm" name="left_palm_global_linvel"/>
+    <framelinvel objtype="site" objname="right_palm" name="right_palm_global_linvel"/>
+  </sensor>
+
+  <include file="sensor.xml"/>
+
+  <keyframe>
+    <!-- HEAD-UP four-point stance from scripts/find_quadruped_pose.py
+         (--head-h 0.55 --sho-lo -2.0 --frac-lo 0.15 --frac-hi 0.35), solved AT
+         THIS SLOPE under the real
+         +-25 Nm shoulder/elbow limits. Arms under the shoulders (sho_p
+         -0.89, not the old overhead -2.75), head 0.61 m above the slope,
+         shoulder torque 11.7 Nm, COM at 23% -- the first head-up solve used
+         the default 30-60% COM band and pitched over its hands in 27 steps;
+         15-35% is the band the original stance measured as stable.
+         The COM is biased toward the FEET (15-35% of the way to the hands),
+         which is the opposite of the first guess. Measured, null-policy
+         episode length at 37.5 deg: 1 step at 55-75% (it pitches straight over
+         its hands), 8 steps at 40-60%, 53 at 25-45%, 79 at 15-35%. -->
+    <key name="home"
+      qpos="0.1212 0.0000 0.7110  0.8920 0.0000 0.4520 0.0000
+      -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 0.0000 0.0000 -0.1820 -1.2523 0.1500 0.0000 1.4076 0.0000 0.0000 0.0000 -1.2523 -0.1500 0.0000 1.4076 0.0000 0.0000 0.0000"
+      ctrl="-0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 0.0000 0.0000 -0.1820 -1.2523 0.1500 0.0000 1.4076 0.0000 0.0000 0.0000 -1.2523 -0.1500 0.0000 1.4076 0.0000 0.0000 0.0000"/>
+    <key name="knees_bent"
+      qpos="0.1212 0.0000 0.7110  0.8920 0.0000 0.4520 0.0000
+      -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 0.0000 0.0000 -0.1820 -1.2523 0.1500 0.0000 1.4076 0.0000 0.0000 0.0000 -1.2523 -0.1500 0.0000 1.4076 0.0000 0.0000 0.0000"
+      ctrl="-0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 -0.8304 0.0000 0.0000 0.1236 -0.8496 0.0000 0.0000 0.0000 -0.1820 -1.2523 0.1500 0.0000 1.4076 0.0000 0.0000 0.0000 -1.2523 -0.1500 0.0000 1.4076 0.0000 0.0000 0.0000"/>
+  </keyframe>
+</mujoco>

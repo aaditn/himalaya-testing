@@ -495,6 +495,11 @@ class Joystick(g1_base.G1Env):
     reward, done = jp.zeros(2)
     return mjx_env.State(data, obs, reward, done, metrics, info)
 
+  def _motor_targets(self, action: jax.Array, info: dict) -> jax.Array:
+    """Position targets for the actuators. Overridable hook (see step())."""
+    del info
+    return self._default_pose + action * self._config.action_scale
+
   def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
     state.info["rng"], push1_rng, push2_rng = jax.random.split(
         state.info["rng"], 3
@@ -516,7 +521,10 @@ class Joystick(g1_base.G1Env):
     data = state.data.replace(qvel=qvel)
     state = state.replace(data=data)
 
-    motor_targets = self._default_pose + action * self._config.action_scale
+    # MODIFIED: routed through a method so a subclass can add a scripted
+    # baseline (climb.py's trot generator). Stock behaviour is unchanged --
+    # the base implementation below is exactly the old inline expression.
+    motor_targets = self._motor_targets(action, state.info)
     data = mjx_env.step(
         self.mjx_model, state.data, motor_targets, self.n_substeps
     )

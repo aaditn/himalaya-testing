@@ -7,3 +7,6 @@ checkpoints/
 scripts/pod/pod.env
 .venv/
 videos/
+
+# HF Jobs staging dir (rebuilt by scripts/hf/launch.sh)
+.hfstage/
