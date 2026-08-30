@@ -62,6 +62,49 @@ python scripts/train.py --timesteps 60_000_000
 python scripts/record.py runs/<name>/policy --out videos/walk.mp4
 ```
 
+## Configurable slope-track designer
+
+This project adds a plug-and-play MuJoCo slope environment with a local browser
+control panel. The saved configuration drives the real MuJoCo heightfield and
+contact friction used by the preview model.
+
+![MuJoCo configurable slope track](artifacts/track-preview.png)
+
+Available controls:
+
+- flat reset area on/off, with adjustable length;
+- slope angle from 5 to 45 degrees;
+- contact friction from 0.20 to 1.50;
+- deterministic surface roughness from 0 to 50 mm;
+- ramp length, summit length, track width, and terrain seed.
+
+Open the designer:
+
+```bash
+python scripts/track_designer.py
+```
+
+Move the sliders and select **Save track**. The validated settings are written
+to `configs/track.json`.
+
+Open that exact saved track in MuJoCo:
+
+```bash
+python scripts/view_track.py
+```
+
+On macOS, use `mjpython scripts/view_track.py`. For a non-GUI check or a PNG
+render:
+
+```bash
+python scripts/view_track.py --headless
+python scripts/view_track.py --image artifacts/track-preview.png
+```
+
+The reusable Python API is in `himalaya/track.py`: `TrackConfig` validates the
+controls, `generate_heightfield` creates deterministic geometry, and
+`apply_track_to_model` applies the heightfield and friction to MuJoCo.
+
 Locally on macOS the viewer needs `mjpython`, not `python`, because the GUI
 must own the main thread:
 

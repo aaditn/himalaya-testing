@@ -67,6 +67,10 @@ FEET_ONLY_RAMP_TERRAIN_XML = (
 FEET_ONLY_MOUNTAIN_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_mountain_terrain.xml"
 )
+# Contributor's configurable slope track, built by scripts/track_designer.py.
+CUSTOM_TRACK_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_track_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
@@ -76,6 +80,7 @@ def task_to_xml(task_name: str) -> epath.Path:
       "slope_terrain": FEET_ONLY_SLOPE_TERRAIN_XML,
       "ramp_terrain": FEET_ONLY_RAMP_TERRAIN_XML,
       "mountain_terrain": FEET_ONLY_MOUNTAIN_TERRAIN_XML,
+      "custom_track": CUSTOM_TRACK_TERRAIN_XML,
   }[task_name]
 
 
