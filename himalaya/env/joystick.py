@@ -309,24 +309,22 @@ class Joystick(g1_base.G1Env):
     # from. x is placed across the platform's width; y keeps the jitter above,
     # so it still sees different rock each episode and cannot memorise one
     # line up the hill.
-    if self._platform_x is not None:
+    # Start ON the slope, in one of the lanes, chosen at random. There is no
+    # platform to retreat to: a flat unrewarded start became a safe harbour
+    # the policy never left. Spawning part-way up means it begins already
+    # committed to the climb, and the route it gets changes every episode.
+    if self._lane is not None:
       rng, key = jax.random.split(rng)
-      px = jax.random.uniform(
-          key, minval=self._platform_x + 0.4, maxval=self._platform_x + 3.0
+      lanes = jp.array(self._lane)
+      pick = jax.random.randint(key, (), 0, lanes.shape[0])
+      rng, key = jax.random.split(rng)
+      qpos = qpos.at[1].set(
+          lanes[pick] + jax.random.uniform(key, minval=-0.35, maxval=0.35)
       )
-      qpos = qpos.at[0].set(px)
-      # Start at the mouth of a RANDOMLY CHOSEN route. Randomising the terrain
-      # rather than the start position is what stops the policy memorising:
-      # the spawn is always a lane mouth, but which lane -- and so the whole
-      # shape of the climb above it -- changes every episode.
-      if self._lane is not None:
-        rng, key = jax.random.split(rng)
-        lanes = jp.array(self._lane)
-        pick = jax.random.randint(key, (), 0, lanes.shape[0])
-        rng, key = jax.random.split(rng)
-        qpos = qpos.at[1].set(
-            lanes[pick] + jax.random.uniform(key, minval=-0.35, maxval=0.35)
-        )
+      # Lower third of the slope, so there is climb left above it.
+      rng, key = jax.random.split(rng)
+      qpos = qpos.at[0].set(jax.random.uniform(key, minval=2.0, maxval=5.0))
+
     rng, key = jax.random.split(rng)
     yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
     quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)

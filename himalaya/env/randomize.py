@@ -43,13 +43,10 @@ def domain_randomize(model: mjx.Model, rng: jax.Array):
     # hand-floor, so new pairs must be appended after these, never inserted.
     rng, key = jax.random.split(rng)
     friction = jax.random.uniform(key, minval=0.4, maxval=1.0)
-    # 0:8 covers every foot/hand contact with the floor and the starting
-    # platform. MuJoCo SORTS <pair> elements, so these indices do not follow
-    # XML order -- adding the platform pairs reshuffled 0:4 from
-    # (both feet, both hands) to (left foot x2, right foot x2), which would
-    # have left the hands pinned at the XML default while the feet varied.
-    # Verified against mj_id2name after any pair change.
-    pair_friction = model.pair_friction.at[0:8, 0:2].set(friction)
+    # 0:4 covers both feet and both hands against the floor. MuJoCo SORTS
+    # <pair> elements, so these indices do not follow XML order -- verify
+    # against mj_id2name after any pair change.
+    pair_friction = model.pair_friction.at[0:4, 0:2].set(friction)
 
     # Scale static friction: *U(0.9, 1.1).
     rng, key = jax.random.split(rng)
