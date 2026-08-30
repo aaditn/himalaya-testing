@@ -890,10 +890,22 @@ class Joystick(g1_base.G1Env):
     # target speed.
     d = self.route_dir_at(data_pos)
     along = jp.dot(global_linvel[:2], d)
-    # Keep a little world-up in it so a corridor that briefly runs downhill is
-    # still worth less than one that climbs. 4:1 in favour of route progress.
     up = jp.dot(global_linvel, jp.array(self._slope_normal_up))
-    speed = jp.where(jp.linalg.norm(d) > 0.5, 0.8 * along + 0.2 * up, up)
+    # GATE the route term on actually gaining height, rather than blending it
+    # with height.
+    #
+    # The blend was 0.8*along + 0.2*up, and the corridor bears ~200 degrees at
+    # the spawn -- mostly lateral. So a robot sliding sideways along the route
+    # collected nearly the full reward while gaining no height, and that is
+    # exactly what Run D did: reward +2.79, episode length 379, net height
+    # -0.25 m. Following the corridor should only pay when the corridor is
+    # taking you UP.
+    #
+    # Below the gate the term falls back to height alone, so descending still
+    # costs and there is no flat region for the policy to sit in.
+    climbing = up > 0.0
+    routed = jp.linalg.norm(d) > 0.5
+    speed = jp.where(routed & climbing, 0.7 * along + 0.3 * up, up)
     # SYMMETRIC clip. It was [-1.0, +0.30], penalising lost height 3.3x harder
     # than gained height -- so under an exploring policy the expected value of
     # moving at all was negative, and the optimal response was to stand still.

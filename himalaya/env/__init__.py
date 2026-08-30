@@ -82,7 +82,12 @@ def climb_walk_config(slope_deg: float = 15.0):
   decisive without being worth abandoning the gait for.
   """
   cfg = walk_on_slope_config(slope_deg)
-  cfg.reward_config.scales.progress_uphill = 1.5
+  # 4.0, was 1.5. Measured on Run D's final eval, progress_uphill earned 63 per
+  # episode against tracking_lin_vel's 192 -- climbing paid a third of what
+  # walking around paid, so the policy wandered between paths and the net
+  # height stayed negative. At 4.0 it earns ~170, comparable to
+  # tracking_lin_vel rather than dominating it, which keeps the gait.
+  cfg.reward_config.scales.progress_uphill = 4.0
   return cfg
 
 
