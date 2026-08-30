@@ -70,9 +70,17 @@ def climb_config(slope_deg: float = 30.0):
   """
   cfg = default_config()
   cfg.slope_deg = slope_deg
+  # Spawn across most of the 12 m patch rather than the default +/-0.5 m,
+  # which is 8% of it. Otherwise the policy sees the same rock every episode
+  # and can learn that specific ground instead of climbing.
+  cfg.spawn_jitter = 4.0
 
   scales = cfg.reward_config.scales
-  scales.progress_uphill = 2.0
+  # Climbing is the whole objective and the only positive term, so it carries
+  # real weight. Symmetric by construction: the reward is a signed projection
+  # onto the uphill direction, so sliding back down is penalised just as
+  # heavily as climbing is rewarded.
+  scales.progress_uphill = 8.0
 
   for term in (
       "orientation", "feet_air_time", "feet_phase", "pose", "collision",

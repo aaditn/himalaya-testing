@@ -42,9 +42,15 @@ def _value_noise(shape, cells, rng):
           + lattice[y0 + 1, x0 + 1] * fy * fx)
 
 
-def bumpy_incline(res=256, extent=12.0, n_bumps=650, bump_r=(0.10, 0.45),
-                  bump_h=(0.10, 0.30), grain=0.03, sharpness=10.0, seed=0):
+def bumpy_incline(res=256, extent=12.0, n_bumps=350, bump_r=(0.10, 0.45),
+                  bump_h=(0.15, 0.35), grain=0.03, sharpness=10.0, seed=0):
   """Return (heights_in_metres, stats).
+
+  Density is a balance, not a maximum. At 650 bumps half the ground was a
+  steep flank -- a spike field rather than an incline with features on it, and
+  the robot would be walking on spikes. At 350 the mix is roughly a quarter
+  flat, a third moderate, a third steep, which leaves ordinary ground between
+  the holds while keeping a hold within arm reach from most positions.
 
   n_bumps   how many discrete features over the patch
   bump_r    bump radius range, metres -- around the 0.05 m hand capsule
@@ -64,14 +70,40 @@ def bumpy_incline(res=256, extent=12.0, n_bumps=650, bump_r=(0.10, 0.45),
     r_m = rng.uniform(*bump_r)
     amp = rng.uniform(*bump_h)
     r_cells = max(1.5, r_m / cell)
-    d = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2) / r_cells
+
+    # Elongate and rotate each bump, so they are shards at random angles
+    # rather than one dome stamped repeatedly. Aspect up to 3:1.
+    th = rng.uniform(0, np.pi)
+    agg = rng.uniform(1.0, 3.0)
+    dy, dx = yy - cy, xx - cx
+    u = (dx * np.cos(th) + dy * np.sin(th)) / (r_cells * agg)
+    v = (-dx * np.sin(th) + dy * np.cos(th)) / r_cells
+    d = np.sqrt(u ** 2 + v ** 2)
     inside = d < 1.0
     if not inside.any():
       continue
-    # (1 - d^2) raised to a power: rounded top, steep flanks. A plain cosine
-    # blob is a ramp a hand slides off.
+
+    # Profile shape is randomised per bump, because one repeated shape is
+    # what made the last terrain look stamped:
+    #   flat-topped  a mesa with a near-vertical rim -- a real ledge to catch
+    #   wedge        linear ramp up to a sharp crest
+    #   dome         the old rounded blob, kept as a minority for variety
+    kind = rng.random()
     profile = np.zeros_like(d)
-    profile[inside] = (1.0 - d[inside] ** 2) ** (1.0 / sharpness)
+    if kind < 0.45:
+      # Plateau out to `flat`, then drop steeply. The rim is the hold.
+      flat = rng.uniform(0.35, 0.7)
+      w = np.clip((1.0 - d[inside]) / max(1e-6, 1.0 - flat), 0.0, 1.0)
+      profile[inside] = w ** 0.35          # low exponent = square shoulder
+    elif kind < 0.8:
+      profile[inside] = (1.0 - d[inside]) ** 0.6   # wedge, sharp crest
+    else:
+      profile[inside] = (1.0 - d[inside] ** 2) ** (1.0 / sharpness)
+
+    # Break the outline so bumps are not smooth ellipses.
+    jag = 1.0 + 0.25 * np.sin(rng.uniform(0, 6.28) + 5.0 * np.arctan2(v, u + 1e-9))
+    profile[inside] *= np.clip(jag[inside], 0.5, 1.4)
+
     h = np.maximum(h, profile * amp)   # max, not sum: bumps overlap as rock
 
   gy, gx = np.gradient(h, cell)

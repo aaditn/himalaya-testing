@@ -120,6 +120,9 @@ def default_config() -> config_dict.ConfigDict:
       # Floor tilt in degrees, applied to the floor geom at load time (see
       # base.py). 0.0 leaves every existing scene exactly as it was.
       slope_deg=0.0,
+      # Half-width of the spawn xy jitter, metres. Wide on the climbing task
+      # so the policy cannot memorise one patch of rock.
+      spawn_jitter=0.5,
       impl="warp",
       naconmax=8 * 8192,
       njmax=29 * 2 + 8 * 4,
@@ -275,9 +278,16 @@ class Joystick(g1_base.G1Env):
     qpos = self._init_q
     qvel = jp.zeros(self.mjx_model.nv)
 
-    # x=+U(-0.5, 0.5), y=+U(-0.5, 0.5), yaw=U(-3.14, 3.14).
+    # x=+U(-s, s), y=+U(-s, s), yaw=U(-3.14, 3.14).
+    #
+    # MODIFIED: spawn_jitter is configurable and much wider on the climbing
+    # task. At +/-0.5 m the robot always started within 8% of a 12 m patch, so
+    # it saw the same handful of bumps every episode and could learn those
+    # rather than how to climb. Wide spawning forces it to handle whatever
+    # rock it lands on.
     rng, key = jax.random.split(rng)
-    dxy = jax.random.uniform(key, (2,), minval=-0.5, maxval=0.5)
+    jitter = self._config.spawn_jitter
+    dxy = jax.random.uniform(key, (2,), minval=-jitter, maxval=jitter)
     qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
     rng, key = jax.random.split(rng)
     yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
