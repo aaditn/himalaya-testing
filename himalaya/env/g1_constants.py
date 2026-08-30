@@ -60,6 +60,13 @@ FEET_ONLY_SLOPE_TERRAIN_XML = (
 FEET_ONLY_RAMP_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_ramp_terrain.xml"
 )
+# Mountainside: fractal rock terraced into ledges, 1.2 m of relief over a 12 m
+# patch. Built for climbing rather than walking -- the stock rough hfield's
+# 5 cm bumps are smaller than the hand capsule, so a palm can press on them but
+# never hook one.
+FEET_ONLY_MOUNTAIN_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_mountain_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
@@ -68,6 +75,7 @@ def task_to_xml(task_name: str) -> epath.Path:
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
       "slope_terrain": FEET_ONLY_SLOPE_TERRAIN_XML,
       "ramp_terrain": FEET_ONLY_RAMP_TERRAIN_XML,
+      "mountain_terrain": FEET_ONLY_MOUNTAIN_TERRAIN_XML,
   }[task_name]
 
 
