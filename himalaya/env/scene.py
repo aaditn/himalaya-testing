@@ -32,13 +32,7 @@ SCENES = {
 # --- spawn -----------------------------------------------------------------
 # Where the robot starts on the mountain, in metres. +x is UPHILL on the tilted
 # floor, so a smaller x is further down the slope.
-SPAWN_X = (0.0, 3.0)
-# Lateral offset added to whichever route mouth is drawn, then clamped to the
-# map. The hfield spans [-6, +6]; lane 3's mouth is at y=+3.88 and would land
-# off the map without the clamp.
-SPAWN_Y_SHIFT = 5.0
-SPAWN_Y_JITTER = 0.35
-SPAWN_Y_CLAMP = 5.5
+SPAWN = (4.0, 5.5)
 # Half-width of the grid sampled to find the rock under the spawn. The grid
 # takes the HIGHEST cell in the span, so a wide span lifts the robot onto a
 # boulder it is standing beside rather than on: 0.25 m overshot the measured
@@ -110,12 +104,6 @@ def lane_mouths():
     """Lateral offset of each route's entrance, or None if the map has no routes."""
     p = ASSETS / "mountain_centre.npy"
     return np.load(p.as_posix()) if p.exists() else None
-
-
-def spawn_y(lane_y, jitter=0.0):
-    """Lateral spawn position for a given route mouth, shifted and clamped."""
-    return float(np.clip(lane_y + SPAWN_Y_SHIFT + jitter,
-                         -SPAWN_Y_CLAMP, SPAWN_Y_CLAMP))
 
 
 def probe_offsets(span=None):

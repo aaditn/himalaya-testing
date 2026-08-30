@@ -35,6 +35,30 @@ behaviour it replaced.
 from himalaya.env.joystick import Joystick, default_config  # noqa: F401
 
 
+def walk_on_slope_config(slope_deg: float = 35.0):
+  """Run A: the walking reward, unchanged, on a tilted floor.
+
+  The null test. It answers one question -- does the slope-frame retargeting of
+  feet_phase and orientation actually work -- for about 1.5 GPU-hours, before
+  200M steps are spent on a reward design that assumes it does.
+
+  Nothing here rewards climbing. If a warm-started walking policy cannot stay
+  upright on this terrain with the reward it was trained on, the terrain or the
+  retargeting is wrong, and no reward design fixes that.
+
+  Gate: episode length recovers to 500+, mean dot(torso_up, slope_normal) > 0.85.
+  """
+  cfg = default_config()
+  cfg.slope_deg = slope_deg
+  # Forward-only command. On a 35 degree slope a zero or negative command tells
+  # the robot to stand still on a hill or walk down it, and standing still is
+  # the safe-harbour behaviour that already killed two runs.
+  cfg.lin_vel_x = [0.4, 0.9]
+  cfg.lin_vel_y = [-0.15, 0.15]
+  cfg.ang_vel_yaw = [-0.6, 0.6]
+  return cfg
+
+
 def climb_config(slope_deg: float = 30.0):
   """Config for the climbing task: reach the top of a steep rough slope.
 

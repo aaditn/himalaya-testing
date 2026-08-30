@@ -97,11 +97,9 @@ def main():
     ap.add_argument("--free", action="store_true",
                     help="do not hold the pose -- let physics take it")
     ap.add_argument("--x", type=float, default=None,
-                    help="spawn x up-slope; default = middle of the training range")
+                    help="spawn x up-slope; default = the training spawn")
     ap.add_argument("--y", type=float, default=None,
-                    help="spawn y; default = the training spawn for --lane")
-    ap.add_argument("--lane", type=int, default=0,
-                    help="which route to start at (0-3)")
+                    help="spawn y; default = the training spawn")
     args = ap.parse_args()
 
     model, slope = build(args.scene, args.climb)
@@ -121,14 +119,8 @@ def main():
         # Spawn where TRAINING spawns. Both numbers come from scene.py, so
         # changing the spawn moves the viewer and the trainer together -- the
         # split copy here is exactly what let them disagree before.
-        lanes = sc.lane_mouths()
-        x = args.x if args.x is not None else 0.5 * sum(sc.SPAWN_X)
-        if args.y is not None:
-            y = args.y
-        elif lanes is not None:
-            y = sc.spawn_y(lanes[args.lane % len(lanes)])
-        else:
-            y = 0.0
+        x = args.x if args.x is not None else sc.SPAWN[0]
+        y = args.y if args.y is not None else sc.SPAWN[1]
         data.qpos[0], data.qpos[1] = x, y
         data.qpos[2] = data.qpos[2] + sc.surface_z(x, slope)
         # tilt the body to stand perpendicular to the slope
@@ -171,8 +163,7 @@ def main():
         for g1, g2, dist in selfcon:
             print(f"  SELF-INTERSECTION: {g1} <-> {g2} by {-dist:.3f} m")
         print(f"spawn: x={x:.2f} y={y:.2f} z={data.qpos[2]:.2f} "
-              f"(lifted {lift:.2f} m clear of the rock)  "
-              f"[training range x {sc.SPAWN_X[0]}-{sc.SPAWN_X[1]}]")
+              f"(lifted {lift:.2f} m clear of the rock)")
 
     if args.terrain_only:
         # Park the robot far away rather than deleting it from the model.

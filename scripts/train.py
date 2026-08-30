@@ -41,10 +41,30 @@ def main():
     ap.add_argument("--name", default=None)
     ap.add_argument("--rough", action="store_true",
                     help="rough terrain instead of flat")
+    ap.add_argument("--walk-slope", type=float, default=None, metavar="DEG",
+                    help="Run A, the null test: the WALKING reward on a tilted "
+                         "floor, no climb term. Checks that the slope-frame "
+                         "retargeting works before a long run assumes it does.")
     ap.add_argument("--climb", type=float, default=None, metavar="DEG",
                     help="train the climbing task on a rough slope of DEG "
                          "degrees (strips the reward terms that forbid a "
                          "hands-down posture; see himalaya/env/climb_config)")
+    ap.add_argument("--load", default=None, metavar="PATH",
+                    help="warm-start from a saved policy (e.g. "
+                         "runs/walk4_rough/policy). Restores the policy and the "
+                         "observation normalizer but NOT the critic -- see "
+                         "--restore-value.")
+    ap.add_argument("--restore-value", action="store_true",
+                    help="also restore the value function. Off by default: when "
+                         "the reward changes, the old critic predicts returns "
+                         "from a different MDP, and confidently wrong values "
+                         "produce confidently wrong advantages. PPO's clipping "
+                         "bounds the policy step, not the baseline error. "
+                         "Re-learning a value head costs ~2%% of a 200M budget.")
+    ap.add_argument("--lr", type=float, default=None,
+                    help="learning rate. Defaults to 3e-4 cold, 1e-4 when "
+                         "--load is given: a warm-started policy needs a small "
+                         "step to survive its freshly-initialised critic.")
     ap.add_argument("--no-randomization", action="store_true",
                     help="train on fixed physics (the old behaviour). Useful "
                          "only as a control -- see the note by randomize below.")
@@ -57,11 +77,15 @@ def main():
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from himalaya.env import Joystick, climb_config, default_config
+    from himalaya.env import walk_on_slope_config
     from himalaya.env import randomize as g1_randomize
 
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
-    if args.climb is not None:
+    if args.walk_slope is not None:
+        task = "mountain_terrain"
+        cfg = walk_on_slope_config(args.walk_slope)
+    elif args.climb is not None:
         # mountain_terrain, not slope_terrain: the stock rough hfield's 5 cm
         # bumps are smaller than the hand capsule, so a palm can press on them
         # but never hook one, and climbing cannot emerge.
@@ -91,6 +115,18 @@ def main():
     # genuinely harder, and the comparison that matters is robustness across a
     # friction sweep, not the training reward.
     randomizer = None if args.no_randomization else g1_randomize.domain_randomize
+
+    # Warm start, loaded before anything else so a bad path fails fast rather
+    # than after the environment has compiled.
+    warm_params = None
+    if args.load:
+        from brax.io import model as brax_model
+        warm_params = brax_model.load_params(args.load)
+        print(f"  warm start: {args.load}")
+        print(f"    restoring policy + observation normalizer"
+              f"{' + value function' if args.restore_value else ''}")
+        print(f"    learning rate {args.lr if args.lr is not None else 1e-4:g}"
+              f" (cold default is 3e-4)")
 
     print(f"run={name}  task={task}")
     print(f"  domain randomization: {'OFF (control)' if randomizer is None else 'ON'}")
@@ -130,7 +166,8 @@ def main():
         unroll_length=20,
         num_updates_per_batch=4,
         discounting=0.97,
-        learning_rate=3e-4,
+        learning_rate=(args.lr if args.lr is not None
+                       else (1e-4 if args.load else 3e-4)),
         # Playground's tuned G1 values (config/locomotion_params.py). 1e-2 is
         # the generic locomotion default and leaves too much exploration noise
         # for this robot.
@@ -154,6 +191,12 @@ def main():
             policy_obs_key="state",
             value_obs_key="privileged_state",
         ),
+        # Warm start. brax restores the observation normalizer along with the
+        # policy and gives no flag to separate them -- that is what makes the
+        # restored policy work at all, though the running statistics are stale
+        # for the new terrain and take a few thousand steps to re-converge.
+        restore_params=warm_params,
+        restore_value_fn=args.restore_value,
         randomization_fn=randomizer,
         wrap_env_fn=wrapper.wrap_for_brax_training,
         # Save at every eval, not just at the end. Without this a run is
