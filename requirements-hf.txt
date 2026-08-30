@@ -1,0 +1,14 @@
+# Direct runtime pins for the immutable Hugging Face image.  Transitive wheels
+# are frozen by the published image digest required by the submitter.
+huggingface-hub==1.29.0
+imageio-ffmpeg==0.6.0
+jax[cuda12]==0.6.2
+jaxlib==0.6.2
+brax==0.14.2
+flax==0.11.2
+mediapy==1.2.7
+mujoco==3.12.0
+mujoco-mjx==3.12.0
+optax==0.2.8
+orbax-checkpoint==0.12.4
+playground @ git+https://github.com/google-deepmind/mujoco_playground.git@8a4b4642d8eba8a80ac99ed125cb62c16e1457ad

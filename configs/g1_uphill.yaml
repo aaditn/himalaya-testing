@@ -1,0 +1,60 @@
+# Stage-I uniform-ramp plan. Runtime defaults live in
+# himalaya/tasks/himalaya_env_cfg.py; this file records the experiment contract.
+
+simulator: mujoco
+base_environment: G1JoystickFlatTerrain
+curriculum_slopes_degrees: [0, 5, 10, 15, 20]
+first_delivery_target_degrees: 15
+
+control:
+  physics_hz: 500
+  policy_hz: 50
+  action: joint_position_residual
+  action_size: 29
+  action_scale: 0.5
+  low_level_controller: inherited_pd
+
+observations:
+  actor:
+    inherited_g1_joystick: true
+    size: 103
+    explicit_slope_information: false
+  critic:
+    inherited_privileged_size: 216
+    slope_descriptor: [slope, bank, absolute_slope, uphill, downhill]
+    size: 221
+
+terrain:
+  type: infinite_smooth_plane
+  uphill_axis: positive_x
+  roughness: false
+  ice: false
+  rocks: false
+  domain_randomization: false
+
+command:
+  uphill_speed_mps: [0.4, 0.6]
+  lateral_speed_mps: [0.0, 0.0]
+  yaw_rate_rad_s: [0.0, 0.0]
+
+ppo:
+  inherited_from: G1JoystickFlatTerrain
+  timesteps_per_stage: 40000000
+  total_timesteps_through_20_degrees: 200000000
+  actor_hidden_layers: [512, 256, 128]
+  critic_hidden_layers: [512, 256, 128]
+  actor_observation_key: state
+  critic_observation_key: privileged_state
+
+promotion:
+  trials: 64
+  distance_m: 6.0
+  min_success_rate: 0.90
+
+validation_metrics:
+  - success_rate
+  - mean_uphill_speed_mps
+  - mean_planted_slip_mps
+  - falls
+  - mean_com_height_m
+  - peak_knee_torque_nm

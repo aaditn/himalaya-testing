@@ -1,0 +1,17 @@
+---
+description: Enforce the baked Dockerfile runtime for every Hugging Face training launch
+alwaysApply: true
+---
+
+# Hugging Face Training Launch Contract
+
+REQUIRED_LAUNCH_CONTRACT: DOCKERFILE_HF_ONLY
+
+- Every training or rendering job must use an immutable image named
+  `himalaya-hf` or `himalaya-g1-hf`, pinned as `@sha256:<64 hex>`.
+- The image must be built from `Dockerfile.hf` with `requirements-hf.txt`.
+- Before training, require `/opt/himalaya-image/menagerie-ready` and require
+  `/opt/himalaya-image/provenance` to contain exactly `Dockerfile.hf`.
+- Never install system or Python dependencies as an in-job fallback.
+- If image provenance is absent or mismatched, fail before allocating training.
+

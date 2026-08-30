@@ -1,0 +1,122 @@
+<mujoco model="g1 four-contact scene">
+  <include file="g1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.45" extent="1.2" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="140" elevation="-25"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="four_contact_groundplane" builtin="checker" mark="edge"
+      rgb1="0.88 0.90 0.94" rgb2="0.62 0.66 0.72" markrgb="0.1 0.1 0.1"
+      width="300" height="300"/>
+    <material name="four_contact_groundplane" texture="four_contact_groundplane"
+      texuniform="true" texrepeat="5 5" reflectance="0"/>
+    <!-- A bounded 5 cm rocky/snow-like relief field.  The source texture is
+         deterministic for audit/replay; randomized reset locations expose
+         the policy to different local patches without changing hardware. -->
+    <hfield name="four_contact_roughness" file="assets/hfield.png"
+      size="8 4 0.05 0.02"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" type="hfield" hfield="four_contact_roughness"
+      material="four_contact_groundplane"/>
+  </worldbody>
+
+  <!-- MODIFIED: microspike replacement hands use the unchanged stock-reach
+       collision envelope with a nominal friction surrogate of 0.9.  No other
+       hand attachment, reach extension, hook, pole, or geometry is added. -->
+  <contact>
+    <!-- MODIFIED: crampon-equipped replacement feet change friction only.
+         The existing foot collision geometry remains unchanged and no other
+         foot attachment is permitted.  Their inherited named pairs are set
+         to 1.0 in the environment before the model is converted to MJX. -->
+    <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor"
+      condim="3" friction="0.9 0.9"/>
+    <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor"
+      condim="3" friction="0.9 0.9"/>
+  </contact>
+
+  <include file="sensor.xml"/>
+
+  <!-- MODIFIED: simulation-only privileged reward/evaluation diagnostics.
+       None of these contact/load values are exposed to the deployed actor. -->
+  <sensor>
+    <contact name="left_hand_floor_found" geom1="left_hand_collision" geom2="floor"
+      reduce="mindist" num="1" data="found"/>
+    <contact name="right_hand_floor_found" geom1="right_hand_collision" geom2="floor"
+      reduce="mindist" num="1" data="found"/>
+    <framelinvel objtype="site" objname="left_palm" name="left_palm_global_linvel"/>
+    <framelinvel objtype="site" objname="right_palm" name="right_palm_global_linvel"/>
+    <force name="left_hand_force" site="left_palm"/>
+    <force name="right_hand_force" site="right_palm"/>
+    <torque name="left_hand_torque" site="left_palm"/>
+    <torque name="right_hand_torque" site="right_palm"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home"
+      qpos="
+      0 0 0.785
+      1 0 0 0
+      -0.1 0 0 0.3 -0.2 0
+      -0.1 0 0 0.3 -0.2 0
+      0 0 0
+      0.2 0.2 0 1.28 0 0 0
+      0.2 -0.2 0 1.28 0 0 0
+      "
+      ctrl="
+      -0.1 0 0 0.3 -0.2 0
+      -0.1 0 0 0.3 -0.2 0
+      0 0 0
+      0.2 0.2 0 1.28 0 0 0
+      0.2 -0.2 0 1.28 0 0 0
+      "/>
+    <key name="knees_bent"
+      qpos="
+      0 0 0.755
+      1 0 0 0
+      -0.312 0 0 0.669 -0.363 0
+      -0.312 0 0 0.669 -0.363 0
+      0 0 0.073
+      0.2 0.2 0 0.6 0 0 0
+      0.2 -0.2 0 0.6 0 0 0
+      "
+      ctrl="
+      -0.312 0 0 0.669 -0.363 0
+      -0.312 0 0 0.669 -0.363 0
+      0 0 0.073
+      0.2 0.2 0 0.6 0 0 0
+      0.2 -0.2 0 0.6 0 0 0
+      "/>
+    <!-- Measured against this MJCF with the stock hand collision envelope.
+         This deep-crawl pose holds all four contacts for the three-second
+         open-loop physics gate.  The alternate hand changes friction only;
+         it does not extend reach. -->
+    <key name="four_contact_crawl"
+      qpos="
+      0 0 0.34
+      0.752772 0 0.658282 0
+      -2.3230529 0 0 2.4441347 -0.85614282 0
+      -2.3230529 0 0 2.4441347 -0.85614282 0
+      0 0 0.073
+      -1.4447132 0.2 0 1.50611 0 -0.057012253 0
+      -1.4447132 -0.2 0 1.50611 0 -0.057012253 0
+      "
+      ctrl="
+      -2.3230529 0 0 2.4441347 -0.85614282 0
+      -2.3230529 0 0 2.4441347 -0.85614282 0
+      0 0 0.073
+      -1.4447132 0.2 0 1.50611 0 -0.057012253 0
+      -1.4447132 -0.2 0 1.50611 0 -0.057012253 0
+      "/>
+  </keyframe>
+</mujoco>

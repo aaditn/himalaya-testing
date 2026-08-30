@@ -43,12 +43,18 @@ FEET_ONLY_FLAT_TERRAIN_XML = (
 FEET_ONLY_ROUGH_TERRAIN_XML = (
     ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
 )
+FOUR_CONTACT_FLAT_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_four_contact_flat_terrain.xml"
+)
 
 
 def task_to_xml(task_name: str) -> epath.Path:
   return {
       "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
       "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
+      # MODIFIED: separate scene so enabling hand-ground constraints cannot
+      # change the biped control environment.
+      "four_contact_terrain": FOUR_CONTACT_FLAT_TERRAIN_XML,
   }[task_name]
 
 

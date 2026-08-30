@@ -7,3 +7,4 @@ checkpoints/
 scripts/pod/pod.env
 .venv/
 videos/
+local_preview/

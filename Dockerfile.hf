@@ -1,0 +1,31 @@
+# Build and publish this image once, then submit it by its sha256 digest.
+# The job launcher rejects mutable image tags for smoke, audit, and real runs.
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+
+LABEL io.himalaya.hf-runtime="Dockerfile.hf" \
+      io.himalaya.dependencies="requirements-hf.txt"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    VIRTUAL_ENV=/opt/himalaya-venv \
+    PATH=/opt/himalaya-venv/bin:${PATH} \
+    PYTHONUNBUFFERED=1 \
+    MUJOCO_GL=egl
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        ffmpeg git libegl1 libgl1 libglfw3 libgles2 libosmesa6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-hf.txt /opt/himalaya-image/requirements-hf.txt
+RUN uv venv "${VIRTUAL_ENV}" \
+    && uv pip install --python "${VIRTUAL_ENV}/bin/python" \
+        --requirement /opt/himalaya-image/requirements-hf.txt \
+    && python -c "from mujoco_playground._src import mjx_env; mjx_env.ensure_menagerie_exists()" \
+    && touch /opt/himalaya-image/menagerie-ready \
+    && printf 'Dockerfile.hf\n' > /opt/himalaya-image/provenance \
+    && uv pip freeze --python "${VIRTUAL_ENV}/bin/python" \
+        > /opt/himalaya-image/installed-packages.txt
+
+WORKDIR /workspace/himalaya
+ENTRYPOINT []
+CMD ["bash"]

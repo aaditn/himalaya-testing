@@ -1,4 +1,4 @@
-# himalaya
+# Himalaya G1 uphill policy
 
 RL locomotion for the Unitree G1 (29-DOF). Sim-only.
 
@@ -143,3 +143,239 @@ trace and a stand/collapse verdict.
    only winners to full scale.
 3. **Kill early, leniently.** `himalaya/utils/killswitch.py`.
 4. **Spot instances** with ~10 min checkpointing — but not for the final run.
+## Uphill Stage I extension
+
+First-stage Unitree G1 uphill locomotion in MuJoCo. The task extends
+DeepMind's existing MuJoCo Playground `G1JoystickFlatTerrain` environment;
+it does not reimplement the G1 model or locomotion stack.
+
+## First deliverable
+
+Train a proprioceptive actor to ascend a uniform 15-degree ramp with at least
+90% success over 64 trials. A successful trial advances 6 m along the ramp
+before the 20 s episode limit. Roughness, ice, rocks, pushes, and dynamics
+randomization are intentionally out of scope until that gate passes.
+
+The curriculum is checkpoint-warm-started:
+
+```text
+0 degrees -> 5 degrees -> 10 degrees -> 15 degrees -> 20 degrees
+```
+
+Training stops at any stage below the 90% promotion gate. The default command
+is 0.4-0.6 m/s uphill with no lateral or yaw command.
+
+## What remains inherited
+
+- 29 joint-position residual actions at 50 Hz
+- 500 Hz MuJoCo physics and the model's position-actuator PD loop
+- the 103-value deployable actor observation
+- G1 PPO architecture and hyperparameters, including a privileged critic
+- termination, joint limits, contact force, collision, action smoothness,
+  foot air-time, and phase rewards
+
+Only the critic receives the five-value slope descriptor. The actor still
+uses the stock proprioceptive observation, including IMU projected gravity;
+it receives no explicit slope angle or terrain scan.
+
+## Uphill additions
+
+- a smooth plane rotated about the cross-slope axis
+- velocity tracking in the ramp tangent frame
+- foot clearance measured normal to the ramp
+- planted-foot tangential velocity for true slip cost
+- bounded slope-dependent uphill torso lean
+- CoM height above the support plane to discourage a crouched gait
+- a Stage-I terrain-aligned ZMP reward using the force-weighted support anchor,
+  full-body CoM apparent acceleration, and inclined support plane
+
+The full Stage-II biomechanical gait adapter is deliberately not included.
+
+## Install
+
+Use Python 3.11 or 3.12. The dependency is pinned to the MuJoCo Playground
+revision against which the environment contract was tested.
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[test]"
+```
+
+For a CUDA 12 Linux training host, install the appropriate JAX CUDA wheel in
+that environment. Windows can run CPU smoke tests, but large PPO training
+should run on a supported Linux CUDA machine.
+
+## Preflight
+
+```bash
+python scripts/preflight.py --slope 15 --impl jax
+```
+
+This compiles a reset and one control step, confirms the 29-action/103-actor
+observation contract, checks the critic-only descriptor, and verifies all
+requested diagnostics.
+
+## Train
+
+The first-deliverable command trains only through 15 degrees:
+
+```bash
+python scripts/train_uphill.py \
+  --target-slope 15 \
+  --output runs/g1_uphill_stage1
+```
+
+Each stage uses 40 million steps by default, preserving the upstream G1 total
+budget of 200 million steps when all five stages are run. For a small wiring
+test, override both workload knobs:
+
+```bash
+python scripts/train_uphill.py \
+  --target-slope 0 \
+  --timesteps-per-stage 100000 \
+  --num-envs 64 \
+  --validation-trials 4
+```
+
+After 15 degrees passes reliably, continue the defined curriculum:
+
+```bash
+python scripts/train_uphill.py \
+  --target-slope 20 \
+  --restore runs/g1_uphill_stage1/stage_03_15deg/checkpoints \
+  --output runs/g1_uphill_stage1_to_20
+```
+
+## Validate every grade
+
+```bash
+python scripts/evaluate_uphill.py \
+  --checkpoint runs/g1_uphill_stage1/stage_03_15deg/checkpoints \
+  --output validation/stage1_all_slopes.json
+```
+
+The evaluator writes JSON and CSV rows for 0, 5, 10, 15, and 20 degrees with
+success rate, uphill speed, planted-foot slip, falls, terminations, CoM
+height, peak knee torque, and progress. A generated report is evidence only
+after real checkpoint rollouts; the repository does not claim an untrained
+policy meets the 15-degree gate.
+
+Render deterministic MuJoCo rollout videos from a checkpoint:
+
+```bash
+MUJOCO_GL=egl python scripts/render_policy.py \
+  --checkpoint runs/g1_uphill_stage1/stage_00_0deg/checkpoints \
+  --output videos/latest \
+  --slopes 0 5 10 15
+```
+
+For Hugging Face, `scripts/submit_hf_video_job.ps1` launches a separate small
+GPU renderer using the same digest-pinned `himalaya-hf` image, so active PPO
+training is not interrupted. Videos are uploaded to `videos/latest`.
+
+## Layout
+
+```text
+himalaya/tasks/himalaya_env_cfg.py  G1 joystick subclass and rewards
+himalaya/training.py                warm-start PPO curriculum and promotion
+himalaya/evaluation.py              rollout metrics
+configs/g1_uphill.yaml              experiment contract
+scripts/preflight.py                compiled environment smoke test
+scripts/train_uphill.py             training entry point
+scripts/evaluate_uphill.py          five-grade evaluation entry point
+```
+
+## Hugging Face Jobs
+
+Authenticate without pasting a token into chat:
+
+```powershell
+hf auth login
+```
+
+Prepare a private model repository and upload the reproducible job source:
+
+```powershell
+.\scripts\submit_hf_job.ps1 -RepoId himalaya-g1-uphill
+```
+
+Uploading does not start billable compute. After checking the selected GPU and
+account credits, explicitly launch the default 15-degree curriculum:
+
+```powershell
+.\scripts\submit_hf_job.ps1 -RepoId himalaya-g1-uphill `
+  -Image ghcr.io/OWNER/himalaya-hf@sha256:... `
+  -Flavor h100 -Timeout 48h -Launch
+```
+
+To charge the job to an organization with Jobs credits, select its namespace:
+
+```powershell
+.\scripts\submit_hf_job.ps1 -RepoId jorshcr/himalaya-g1-uphill `
+  -Namespace iteratehack `
+  -Image ghcr.io/OWNER/himalaya-hf@sha256:... `
+  -Flavor a100-large -Timeout 48h -Launch
+```
+
+The Linux runner requires the dependency and Menagerie runtime prebuilt by
+`Dockerfile.hf`, installs only this source package, runs the MuJoCo preflight,
+trains the sequential curriculum, and syncs checkpoints and metrics
+to `runs/g1_uphill_stage1` in the same private repository every ten minutes and
+on exit. No Isaac dependency or runtime is installed. Override workload knobs
+with `-TimestepsPerStage`, `-NumEnvs`, and `-ValidationTrials`; use small values
+for an inexpensive end-to-end smoke job before the full run.
+
+## Four-contact cloud launch gate
+
+Four-contact jobs use reusable audit evidence. Build the dependency image once
+with the `Build pinned Hugging Face runtime` GitHub Action (make the GHCR
+package public for Hugging Face Jobs), then copy the immutable digest reference
+from its job summary. A local Docker installation can instead use:
+
+```powershell
+.\scripts\build_hf_image.ps1 `
+  -ImageTag ghcr.io/OWNER/himalaya-g1-hf:2026-08-29 `
+  -Push
+```
+
+Run the reduced evaluator/PPO/checkpoint/video smoke workload once. It performs
+static 30/35-degree contract checks, 512 PPO steps across 16 environments,
+checkpoint reload, and a short verified MP4:
+
+```powershell
+.\scripts\submit_hf_four_contact_job.ps1 `
+  -Mode Smoke `
+  -RepoId jorshcr/himalaya-g1-four-contact `
+  -Namespace iteratehack `
+  -Image ghcr.io/OWNER/himalaya-g1-hf@sha256:... `
+  -Flavor h200 `
+  -Launch
+```
+
+The JSON smoke marker is bound to its exact audited source revision, the
+runtime-content digest, and the immutable image digest. It remains reusable
+across documentation-only changes; Python runtime, XML, dependency, Dockerfile,
+or image changes invalidate it. A real job verifies that marker, runs only the
+lightweight non-JIT sanity check, and starts the 30-to-35-degree curriculum:
+
+```powershell
+.\scripts\submit_hf_four_contact_job.ps1 `
+  -Mode Real `
+  -RepoId jorshcr/himalaya-g1-four-contact `
+  -Namespace iteratehack `
+  -Image ghcr.io/OWNER/himalaya-g1-hf@sha256:... `
+  -Flavor h200 -Timeout 16h `
+  -HumanAuditApprovedBy USERNAME `
+  -HumanAuditApprovalRef "review ticket or task reference" `
+  -Launch
+```
+
+`-SkipSmokeGate` is an explicit emergency override. It never creates a false
+pass marker; the waiver, approver, timestamp, source revision, runtime digest,
+and image digest are retained in the run evidence.
+
+Every run is isolated under `runs/<mode>/<source-revision>/<run-id>`. Final
+artifact upload is mandatory. Logs, timing manifests, checkpoints, approval,
+gate verification, and video verification JSON are preserved, and every
+completed curriculum stage is rendered even when later validation fails.

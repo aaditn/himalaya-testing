@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "himalaya-g1"
+version = "0.1.0"
+description = "MuJoCo Playground Stage-I uphill policy for Unitree G1"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "playground @ git+https://github.com/google-deepmind/mujoco_playground.git@8a4b4642d8eba8a80ac99ed125cb62c16e1457ad",
+]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda12]"]
+test = ["pytest>=8"]
+
+[project.scripts]
+himalaya-train = "himalaya.training:main"
+himalaya-evaluate = "himalaya.cli_evaluate:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["himalaya"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
