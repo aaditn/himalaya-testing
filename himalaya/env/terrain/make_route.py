@@ -33,7 +33,14 @@ import numpy as np
 
 # Total relief, metres. Must not exceed the hfield z_scale in the scene XML
 # (size="6 6 <z_scale> 1.0"), or the PNG clips and the peaks flatten to a mesa.
-_PEAK_M = 1.05
+_PEAK_M = 2.20
+# Corridor carved INTO the terrain. Depth sets the minimum wall height either
+# side; the G1's shoulder is at 1.09 m and its arm reaches 0.46 m, so a wall
+# 0.84-1.34 m tall puts a palm near shoulder height. CHANNEL_W is the flat
+# floor the robot walks on, CHANNEL_WALL_W how far the wall takes to rise.
+CHANNEL_DEPTH = 1.10
+CHANNEL_W = 1.0
+CHANNEL_WALL_W = 0.7
 
 # Wall profile exponent. ABOVE 1 eases out of the lane and steepens as it goes,
 # which is a bank; BELOW 1 leaves the lane edge with infinite slope, which is a
@@ -242,6 +249,37 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
     # Median, not blur: removes the spikes, leaves the walls standing.
     h = _despike(h, k=_BLUR_K, passes=_DESPIKE_PASSES)
 
+  # CARVE the corridors into the terrain, rather than building walls around
+  # them.
+  #
+  # The wall-building approach cannot produce a channel. It raises ground
+  # either side of a lane, but the fractal base and the `rough` noise are
+  # applied over the top and then the whole field is renormalised to _PEAK_M,
+  # so what survives is a hillside with scattered high ground. Measured after
+  # raising wall_h to 1.35 m: wall p90 reached 0.93 m, inside the robot's
+  # 0.84-1.34 m bracing band, but ZERO corridor cells had walls on both sides
+  # at that height -- every route hugged the base of a single tall face.
+  #
+  # Cutting the channel out instead makes the walls whatever the surrounding
+  # terrain already is, and CHANNEL_DEPTH is a floor on how tall they are. The
+  # lane floor stays where the route was, so the walkable opening is unchanged.
+  if CHANNEL_DEPTH > 0.0:
+    lat = np.arange(res)[None, :]
+    _carved = []
+    for r in range(n_routes):
+      c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + (res / n_routes) * (r + 0.5)
+      # Remember exactly where this channel was cut. A greedy tracer cannot
+      # find it afterwards -- it will not step down into a 1.1 m trench -- and
+      # a re-run of _smooth_path draws different numbers. These ARE the
+      # corridors, so they are the centrelines.
+      _carved.append(c.copy())
+      dist = np.abs(lat - c[:, None]) * cell
+      # Flat floor out to half the lane width, then a smooth ramp back up to
+      # the untouched surface over CHANNEL_WALL_W.
+      t = np.clip((dist - CHANNEL_W / 2.0) / CHANNEL_WALL_W, 0.0, 1.0)
+      cut = CHANNEL_DEPTH * (1.0 - t * t * (3.0 - 2.0 * t))
+      h = h - cut
+
   h -= h.min()
   # Normalise to the scene's z_scale budget. The XML declares the hfield as
   # size="6 6 1.10 1.0", so a PNG is written as h/z_scale clipped to [0,1] --
@@ -251,6 +289,9 @@ def route(res=256, extent=12.0, lane_w=1.4, wall_h=0.85, wall_w=1.6,
   peak = float(h.max())
   if peak > 0 and _PEAK_M > 0:
     h *= _PEAK_M / peak
+
+  globals()["_LAST_CHANNELS"] = (
+      np.array(_carved) if CHANNEL_DEPTH > 0.0 and n_routes else None)
 
   lane_mask = dist < half_lane
   gy, gx = np.gradient(h, cell)
@@ -299,89 +340,21 @@ def write_png(path, z_scale, **kw):
   #
   # Shape (n_routes, res, 2): world x, y at each step along the climb. Row i is
   # the lane centre at up-slope position x = -extent/2 + i*cell.
-  # Trace the routes out of the HEIGHTFIELD, not out of the generator's rng.
+  # The channels ARE the routes -- route() records where it cut them.
   #
-  # Re-running _smooth_path here does not reproduce the paths that shaped h:
-  # write_png draws from a fresh rng, so the draws differ. Measured, the
-  # centrelines that produced sat at 0.19-0.29 m mean relief against a map mean
-  # of 0.22 -- i.e. on average ground, one of them ABOVE average, describing a
-  # different mountain than the one written to disk.
+  # Nothing needs to search for them: a greedy tracer will not step down into a
+  # 1.1 m trench (measured, it ran along the wall tops at 0.29-0.57 m relief
+  # instead of the 0.05 m floor), and re-running _smooth_path here draws
+  # different random numbers than the ones that shaped the terrain.
   #
-  # Following the trough in h itself cannot drift from the terrain, because it
-  # IS the terrain. For each route band, walk up the slope taking the lowest
-  # cell within the band at each step.
-  # Walk along the FALL LINE, not along the contour.
-  #
-  # This previously scanned grid ROWS (world y) and took the lowest cell in
-  # each -- which traces contour lines. They sat in real troughs (0.06-0.09 m
-  # relief against a 0.22 m map mean), so they looked right, but measured end
-  # to end they gained between -0.19 m and +0.31 m over 12 m: they were ditches
-  # AROUND the mountain, not routes up it. Rewarding progress along them
-  # rewards a lap.
-  #
-  # The slope descends with world x (surface_z = -x*tan), and grid COLUMNS are
-  # world x, so scanning columns and taking the lowest cell in each gives a
-  # line that crosses the hillside while making net upward progress -- a
-  # switchback, which is what a real route is.
-  # Each route gets a PREFERRED DIRECTION across the hill, so it reads as a
-  # deliberate line rather than the steepest available cell.
-  #
-  # Taking the lowest cell in every column alone drags the trace almost
-  # straight up the fall line -- measured, 0.76 to 0.90 uphill directness,
-  # where 1.0 is charging the gradient. A switchback wants 0.4-0.7: climbing
-  # steadily while crossing the slope. The bias below adds a lateral drift and
-  # penalises departing from it, so the route commits to a traverse and only
-  # leaves it where the terrain genuinely offers something better.
-  # Routes SHARE the hillside rather than owning a quarter of it each.
-  #
-  # Confining a route to res/n_routes = 64 cells gives it 3 m of lateral room
-  # while it climbs 12 m, which caps the traverse angle no matter what the
-  # drift is -- measured, directness stayed at 0.78-0.88 across a 5x change in
-  # drift and the line climbed out of its trough. A switchback needs to cross
-  # most of the hill, so each route is given ROUTE_SPAN of the map, offset so
-  # the four still start in different places.
+  # Grid col -> world x, grid row -> world y, both offset to centre the map.
+  ch = globals().get("_LAST_CHANNELS")
+  if ch is None:
+    raise RuntimeError("route() recorded no channels; is CHANNEL_DEPTH 0?")
   lines = []
-  span = int(res * ROUTE_SPAN)
-  for r in range(n_routes):
-    centre = int(res * (r + 0.5) / n_routes)
-    lo = max(0, centre - span // 2)
-    hi = min(res, centre + span // 2)
-    # Alternate the drift direction per route, so the map has lines leaning
-    # both ways rather than four parallel diagonals.
-    drift = (1.0 if r % 2 == 0 else -1.0) * DRIFT_CELLS_PER_COL
-    ys = []
-    want = (lo + hi) / 2.0
-    for col in range(res):
-      window = h[lo:hi, col].copy()
-      # Cost = terrain height + how far this row strays from where the drift
-      # says the route should be by now. BIAS_W sets how strongly the line
-      # holds its heading against a tempting dip.
-      rows = np.arange(lo, hi, dtype=float)
-      cost = window + BIAS_W * np.abs(rows - want) / max(hi - lo, 1)
-      row = lo + int(np.argmin(cost))
-      ys.append(row)
-      # Advance the target, and BOUNCE off the band edges rather than clamping.
-      # Clamping pinned the target to one side for most of the trace, and the
-      # bias term then simply pulled the line straight up -- measured,
-      # directness went UP to 0.89-0.97 and the line climbed out of the trough
-      # to 0.19-0.21 m relief against a 0.22 m map mean. Bouncing gives a real
-      # zigzag: the route crosses the band, turns, and crosses back.
-      want += drift
-      if want < lo + 1:
-        want = lo + 1.0
-        drift = abs(drift)
-      elif want > hi - 2:
-        want = hi - 2.0
-        drift = -abs(drift)
-    ys = np.array(ys, dtype=float)
-    # Smooth so the line is a route rather than a per-row jitter between
-    # equally low cells.
-    k = 15
-    pad = np.pad(ys, k, mode="edge")
-    ys = np.convolve(pad, np.ones(2 * k + 1) / (2 * k + 1), mode="valid")
-    # ys now indexes grid ROWS (world y); the scan axis is COLUMNS (world x).
-    lane_x = (np.arange(res) - res / 2.0) * cell     # world x = grid COL
-    lane_y = (ys - res / 2.0) * cell                 # world y = grid ROW
+  for r in range(ch.shape[0]):
+    lane_x = (np.arange(res) - res / 2.0) * cell
+    lane_y = (ch[r] - res / 2.0) * cell
     lines.append(np.stack([lane_x, lane_y], axis=1))
   lines = np.array(lines)
   np.save(str(path).replace(".png", "_centre.npy"), lines[:, 0, 1])

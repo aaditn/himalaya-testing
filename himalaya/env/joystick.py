@@ -675,6 +675,15 @@ class Joystick(g1_base.G1Env):
         * self._config.noise_config.scales.linvel
     )
 
+    # Route heading rotated into the body frame. yaw_inv turns a world xy
+    # vector into the pelvis's own left/forward axes.
+    route_world = self.route_dir_at(data.qpos[0:3])
+    fwd = math.rotate(jp.array([1.0, 0.0, 0.0]), data.qpos[3:7])[:2]
+    fwd = fwd / (jp.linalg.norm(fwd) + 1e-6)
+    left = jp.array([-fwd[1], fwd[0]])
+    route_local = jp.array([jp.dot(route_world, fwd),
+                            jp.dot(route_world, left)])
+
     state = jp.hstack([
         noisy_linvel,  # 3
         noisy_gyro,  # 3
@@ -684,6 +693,19 @@ class Joystick(g1_base.G1Env):
         noisy_joint_vel,  # 29
         info["last_act"],  # 29
         phase,
+        # MODIFIED: which way the corridor runs, in the BODY frame. 2 dims.
+        #
+        # progress_uphill pays for velocity along the route, but nothing in the
+        # observation said where the route went -- the policy was being paid to
+        # move in a direction it could not perceive, so it could only find the
+        # corridor by trial and error against a reward it could not attribute.
+        # Measured over four runs, that produced rising reward curves with net
+        # height of -0.31, -0.43, -0.25 and +0.01 m.
+        #
+        # Body frame, not world: a real robot knows where a wall is relative to
+        # itself, not its global heading. Zero on flat ground and on any scene
+        # without routes, so nothing else changes.
+        route_local,  # 2
     ])
 
     accelerometer = self.get_accelerometer(data, "pelvis")

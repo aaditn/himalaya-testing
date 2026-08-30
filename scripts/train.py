@@ -128,6 +128,37 @@ def main():
     if args.load:
         from brax.io import model as brax_model
         warm_params = brax_model.load_params(args.load)
+        # Zero-pad the first layer if the observation has grown.
+        #
+        # Adding inputs widens the policy network, so a restored checkpoint no
+        # longer fits. Padding the new columns with ZEROS makes the warm-started
+        # policy compute exactly what it did before -- the new inputs contribute
+        # nothing until training gives them weight -- so the gait survives
+        # instead of being discarded.
+        import jax.numpy as _jp
+
+        def _pad_first_layer(net_params, want):
+            tree = net_params.get("params", net_params)
+            for name in sorted(tree):
+                layer = tree[name]
+                if not isinstance(layer, dict) or "kernel" not in layer:
+                    continue
+                k = layer["kernel"]
+                if k.ndim == 2 and k.shape[0] < want:
+                    n = want - k.shape[0]
+                    layer["kernel"] = _jp.concatenate(
+                        [k, _jp.zeros((n, k.shape[1]), k.dtype)], axis=0)
+                    print(f"    padded {name}: {k.shape} ->"
+                          f" {layer['kernel'].shape}")
+                    return True
+            return False
+
+        sizes = env.observation_size
+        warm_params = list(warm_params)
+        _pad_first_layer(warm_params[1], sizes["state"])
+        if len(warm_params) > 2:
+            _pad_first_layer(warm_params[2], sizes["privileged_state"])
+        warm_params = tuple(warm_params)
         print(f"  warm start: {args.load}")
         print(f"    restoring policy + observation normalizer"
               f"{' + value function' if args.restore_value else ''}")

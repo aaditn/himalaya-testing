@@ -57,58 +57,90 @@ CLIMB_W = 3.0   # how much a metre of height gained is worth against a metre
 
 def trace(surf, slope_rad, extent, n_routes, steps, step_len, drift_bias,
           climb_w=None):
-    """Walk each route up the hill, preferring low ground.
+    """Extract the carved channels by RAY-CAST, column by column.
 
-    At every step the candidate headings are those with an uphill component;
-    the one whose landing point sits lowest ABOVE THE MEAN PLANE wins. Height
-    above the plane, not raw world z, is what distinguishes a corridor from the
-    hillside -- raw z always falls as you descend, so minimising it walks
-    downhill.
+    Not a greedy walk. A walker will not step down into a 1.1 m trench -- it
+    ran along the wall tops at 0.29-0.57 m relief instead of the 0.05 m floor.
+    And the channel positions cannot be read back from make_route.py's grid
+    indices without redoing the row/column mapping that has already produced a
+    90-degree error twice today.
+
+    So: sample each x-column, find the runs of low ground, and link runs
+    between adjacent columns into continuous channels. Everything comes from
+    mj_ray against the compiled geometry, so it cannot disagree with what the
+    viewer draws.
     """
     half = extent / 2.0
     tan = np.tan(slope_rad)
-    cw = CLIMB_W if climb_w is None else climb_w
-    lines = []
-    # Spread the starts across the downhill edge so the routes do not overlap.
-    for r in range(n_routes):
-        y = -half + extent * (r + 0.5) / n_routes
-        x = half - 1.0                     # start low on the hill (large x)
-        pts = [(x, y)]
-        heading = np.pi                    # -x is uphill
-        for _ in range(steps):
-            best, best_h, best_p = None, None, None
-            for dth in np.linspace(-1.2, 1.2, 25):
-                th = heading + dth
-                nx, ny = x + np.cos(th) * step_len, y + np.sin(th) * step_len
-                if abs(nx) > half - 0.4 or abs(ny) > half - 0.4:
+    xs = np.linspace(-half + 0.5, half - 0.5, 90)
+    ys = np.linspace(-half + 0.5, half - 0.5, 120)
+
+    # Per column, the y-centres of each contiguous low-ground run.
+    cols = []
+    for x in xs:
+        rel = []
+        for y in ys:
+            z = surf(x, y)
+            rel.append(1e9 if z is None else z - (-x * tan))
+        rel = np.array(rel)
+        thr = 0.20
+        runs, cur = [], []
+        for k, r in enumerate(rel):
+            if r < thr:
+                cur.append(k)
+            elif cur:
+                runs.append(cur); cur = []
+        if cur:
+            runs.append(cur)
+        cols.append([float(np.mean(ys[np.array(run)])) for run in runs
+                     if len(run) >= 2])
+
+    # Link runs across columns, seeding from the column that has the most.
+    # Seeding from column 0 finds nothing: the map edge is not where the
+    # channels are widest, and a channel that has not started yet has no run
+    # to seed from. Walk out in BOTH directions from the seed column.
+    seed_j = max(range(len(cols)), key=lambda j: len(cols[j]))
+    chans = []
+    for seed in cols[seed_j]:
+        # SKIP empty columns rather than stopping at them. 11 of 90 columns
+        # have no run at all -- the channel passes under a bridge of terrain or
+        # the sampling misses it -- and breaking on the first gap ended every
+        # chain immediately.
+        def walk(rng_):
+            out_, y_, miss = [], seed, 0
+            for j in rng_:
+                if not cols[j]:
+                    miss += 1
+                    if miss > 3:
+                        break
                     continue
-                z = surf(nx, ny)
-                if z is None:
+                nxt = min(cols[j], key=lambda v: abs(v - y_))
+                if abs(nxt - y_) > 0.6 * (miss + 1) + 0.6:
+                    miss += 1
+                    if miss > 3:
+                        break
                     continue
-                # Height above the tilted mean plane at that point.
-                rel = z - (-nx * tan)
-                # Trade relief against PROGRESS explicitly.
-                #
-                # Minimising relief alone finds the flattest ground, which on a
-                # hillside is sideways: measured, pure-relief routes sat at
-                # 0.006-0.047 m (beautifully in the troughs) but climbed only
-                # 0.14-0.36 m over the whole map, because a contour is the
-                # flattest line there is. Penalising turns instead just made
-                # them straight. What a route actually wants is to gain height
-                # while staying low relative to the ground beside it, so the
-                # cost pays for uphill progress and charges for relief.
-                gain = (x - nx) * tan          # height gained on the plane
-                cost = rel - cw * gain + drift_bias * abs(dth)
-                if best is None or cost < best:
-                    best, best_h, best_p = cost, th, (nx, ny)
-            if best_p is None:
-                break
-            x, y = best_p
-            heading = best_h
-            pts.append((x, y))
-        lines.append(pts)
-    n = min(len(p) for p in lines)
-    return np.array([p[:n] for p in lines])
+                y_, miss = nxt, 0
+                out_.append((xs[j], y_))
+            return out_
+        left = walk(range(seed_j - 1, -1, -1))
+        right = walk(range(seed_j + 1, len(xs)))
+        pts = left[::-1] + [(xs[seed_j], seed)] + right
+        if len(pts) > 20:
+            chans.append(pts)
+
+    chans.sort(key=len, reverse=True)
+    chans = chans[:n_routes]
+    if not chans:
+        raise RuntimeError("no channels found; is CHANNEL_DEPTH 0?")
+    n = min(len(c) for c in chans)
+    out = np.array([c[:n] for c in chans])
+    # Order every channel so index 0 is the DOWNHILL end (large x), so the
+    # tangent runs uphill.
+    for r in range(out.shape[0]):
+        if out[r, 0, 0] < out[r, -1, 0]:
+            out[r] = out[r][::-1]
+    return out
 
 
 def main():

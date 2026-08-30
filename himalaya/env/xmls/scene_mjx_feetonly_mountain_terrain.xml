@@ -38,7 +38,7 @@
          hands could only ever add pressing friction. Here the risers reach
          ~0.2 m, several times the hand radius, so a palm can brace against a
          face instead of just pressing down on one. -->
-    <hfield name="hfield" file="assets/mountain.png" size="6 6 1.10 1.0"/>
+    <hfield name="hfield" file="assets/mountain.png" size="6 6 2.30 1.0"/>
   </asset>
 
   <worldbody>
