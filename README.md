@@ -96,6 +96,20 @@ that organization. Runs also mount the existing `iteratehack/himalaya-runs`
 bucket read-write at `/runs` and receive the label `remote=myremote`.
 Credentials are kept by the Hugging Face CLI and are never stored in this repo.
 
+On Windows, install or refresh the full project environment and cloud tooling:
+
+```powershell
+.\scripts\setup_hf_cloud.ps1
+.\.venv\Scripts\Activate.ps1
+hf auth whoami
+```
+
+The setup installs the project, MuJoCo/JAX/Brax dependencies, the `hf` CLI,
+`hf-xet` accelerated transfers, and test tooling into `.venv`. Local Docker is
+not required for Hugging Face Jobs: the service pulls the requested image on
+its own infrastructure. CUDA dependencies are installed inside the selected
+Linux Job image via the project's `cuda` optional dependency.
+
 ```bash
 python scripts/myremote.py config
 python scripts/myremote.py list --limit 5

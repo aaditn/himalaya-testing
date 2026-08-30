@@ -15,7 +15,7 @@ dependencies = [
   "mujoco>=3.6.0",
   "mujoco-mjx>=3.6.0",
   "brax>=0.14.2",
-  "huggingface-hub>=0.30",
+  "huggingface-hub>=1.8.0",
   "mediapy>=1.2",
   "imageio-ffmpeg>=0.6",
 ]
