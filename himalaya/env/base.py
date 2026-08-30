@@ -144,6 +144,11 @@ class G1Env(mjx_env.MjxEnv):
       if cpath.exists():
         self._lane = _np.load(cpath.as_posix())
 
+    # World "up". Height gain along this is the climbing objective -- see
+    # _reward_progress_uphill. Kept here so the reward needs to know nothing
+    # about where the route goes.
+    self._slope_normal_up = np.array([0.0, 0.0, 1.0])
+
     self._terrain_peak = 0.0
     if self._mj_model.nhfield > 0:
       nr = int(self._mj_model.hfield_nrow[0])
