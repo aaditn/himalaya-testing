@@ -280,11 +280,47 @@ def write_png(path, z_scale, **kw):
   rng = np.random.default_rng(kw.get("seed", 0))
   cell = extent / res
   band = res / n_routes
-  mouths = []
+  # Save the FULL centreline of every route, not just its mouth.
+  #
+  # The mouth alone was enough when the reward was height gained, which needs no
+  # route. It is not enough to reward progress ALONG a corridor: these lanes run
+  # roughly across the fall line (measured at the spawn, the low ground bears
+  # 90-120 degrees while every other heading meets a 0.4-0.8 m bank), so
+  # "uphill" and "along the route" point in genuinely different directions.
+  #
+  # Shape (n_routes, res, 2): world x, y at each step along the climb. Row i is
+  # the lane centre at up-slope position x = -extent/2 + i*cell.
+  # Trace the routes out of the HEIGHTFIELD, not out of the generator's rng.
+  #
+  # Re-running _smooth_path here does not reproduce the paths that shaped h:
+  # write_png draws from a fresh rng, so the draws differ. Measured, the
+  # centrelines that produced sat at 0.19-0.29 m mean relief against a map mean
+  # of 0.22 -- i.e. on average ground, one of them ABOVE average, describing a
+  # different mountain than the one written to disk.
+  #
+  # Following the trough in h itself cannot drift from the terrain, because it
+  # IS the terrain. For each route band, walk up the slope taking the lowest
+  # cell within the band at each step.
+  lines = []
+  band_w = res // n_routes
   for r in range(n_routes):
-    c = _smooth_path(res, rng, wiggle=1.1) - res / 2.0 + band * (r + 0.5)
-    mouths.append((c[0] - res / 2.0) * cell)   # lateral offset at the bottom
-  np.save(str(path).replace(".png", "_centre.npy"), np.array(mouths))
+    lo, hi = r * band_w, (r + 1) * band_w
+    ys = []
+    for row in range(res):
+      col = lo + int(np.argmin(h[row, lo:hi]))
+      ys.append(col)
+    ys = np.array(ys, dtype=float)
+    # Smooth so the line is a route rather than a per-row jitter between
+    # equally low cells.
+    k = 15
+    pad = np.pad(ys, k, mode="edge")
+    ys = np.convolve(pad, np.ones(2 * k + 1) / (2 * k + 1), mode="valid")
+    lane_y = (np.arange(res) - res / 2.0) * cell     # world y = grid ROW
+    lane_x = (ys - res / 2.0) * cell                 # world x = grid COL
+    lines.append(np.stack([lane_x, lane_y], axis=1))
+  lines = np.array(lines)
+  np.save(str(path).replace(".png", "_centre.npy"), lines[:, 0, 1])
+  np.save(str(path).replace(".png", "_lines.npy"), lines)
   return h, stats
 
 

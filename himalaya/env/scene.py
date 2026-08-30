@@ -37,7 +37,7 @@ SPAWN = (4.0, 5.5)
 # the body tilt below rotates it about +Y to stand perpendicular to the surface,
 # which pitches its forward axis DOWN the hill, so without this a forward
 # velocity command is an instruction to descend.
-SPAWN_YAW = np.pi
+SPAWN_YAW = 0.5 * np.pi
 SPAWN_YAW_JITTER = 0.3
 # Half-width of the grid sampled to find the rock under the spawn. The grid
 # takes the HIGHEST cell in the span, so a wide span lifts the robot onto a
@@ -104,6 +104,36 @@ def uphill(slope_rad):
 def surface_z(x, slope_rad):
     """World z of the tilted mean plane at up-slope position x."""
     return -x * np.tan(slope_rad)
+
+
+def route_lines():
+    """(n_routes, steps, 2) world x,y centreline of every corridor, or None.
+
+    Traced out of the heightfield itself by make_route.py, so it cannot
+    disagree with the terrain. Measured: 0.06-0.09 m mean relief along these
+    lines against a 0.22 m map mean.
+    """
+    p = ASSETS / "mountain_lines.npy"
+    return np.load(p.as_posix()) if p.exists() else None
+
+
+def route_tangent(lines, xy):
+    """Unit heading of the nearest corridor at a world point, and the distance.
+
+    Returns (tangent_xy, distance_m). The tangent always points UP the slope
+    (towards +x, since the floor is tilted about +Y and descends with x).
+    """
+    pts = lines.reshape(-1, 2)
+    d = np.linalg.norm(pts - np.asarray(xy)[:2], axis=1)
+    k = int(np.argmin(d))
+    ri, si = k // lines.shape[1], k % lines.shape[1]
+    nxt = min(si + 8, lines.shape[1] - 1)
+    prv = max(si - 8, 0)
+    t = lines[ri, nxt] - lines[ri, prv]
+    nrm = np.linalg.norm(t)
+    if nrm < 1e-9:
+        return np.array([1.0, 0.0]), float(d[k])
+    return t / nrm, float(d[k])
 
 
 def lane_mouths():

@@ -874,7 +874,26 @@ class Joystick(g1_base.G1Env):
     # is optimising something a real robot could actually measure, since its own
     # altitude is implied by the gravity vector and proprioception it already
     # senses.
-    speed = jp.dot(global_linvel, jp.array(self._slope_normal_up))
+    # MODIFIED: speed ALONG THE CORRIDOR, not height gained.
+    #
+    # dot(v, world_up) was the wrong objective for this map. The corridors run
+    # roughly across the fall line -- measured at the spawn, the low ground
+    # bears 90-120 degrees while every other heading meets a 0.4-0.8 m bank --
+    # so the fastest way to gain height is to charge straight at a bank, and
+    # the reward paid MOST for abandoning the route. Two runs drifted downhill
+    # under it while their reward curves rose.
+    #
+    # The route tangent is derived from the heightfield itself (base.py builds
+    # the field; make_route.py traces the lines through the troughs), so it
+    # cannot disagree with the terrain the robot is standing on. It names the
+    # goal without prescribing a gait, the same way tracking_lin_vel names a
+    # target speed.
+    d = self.route_dir_at(data_pos)
+    along = jp.dot(global_linvel[:2], d)
+    # Keep a little world-up in it so a corridor that briefly runs downhill is
+    # still worth less than one that climbs. 4:1 in favour of route progress.
+    up = jp.dot(global_linvel, jp.array(self._slope_normal_up))
+    speed = jp.where(jp.linalg.norm(d) > 0.5, 0.8 * along + 0.2 * up, up)
     # SYMMETRIC clip. It was [-1.0, +0.30], penalising lost height 3.3x harder
     # than gained height -- so under an exploring policy the expected value of
     # moving at all was negative, and the optimal response was to stand still.

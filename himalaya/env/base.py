@@ -142,6 +142,33 @@ class G1Env(mjx_env.MjxEnv):
       import numpy as _np
       self._lane = scene_mod.lane_mouths()
 
+    # Route tangent field, precomputed on a coarse grid.
+    #
+    # progress_uphill rewards dot(velocity, world_up), i.e. height gained. On
+    # this map that is the WRONG objective: the corridors run roughly across
+    # the fall line (measured at the spawn, low ground bears 90-120 degrees
+    # while every other heading meets a 0.4-0.8 m bank), so the fastest way to
+    # gain height is to charge straight at a bank and the reward pays most for
+    # leaving the route. Two runs drifted downhill under it.
+    #
+    # This field lets the reward measure progress ALONG the corridor instead.
+    # Sampling a precomputed grid keeps it a constant under jit -- the route
+    # never moves, so there is nothing to recompute per step.
+    self._route_dir = None
+    lines = scene_mod.route_lines()
+    if lines is not None and self._slope_rad != 0.0:
+      gn = 48
+      half = 6.0
+      xs = np.linspace(-half, half, gn)
+      ys = np.linspace(-half, half, gn)
+      field = np.zeros((gn, gn, 2))
+      for i, yy in enumerate(ys):
+        for j, xx in enumerate(xs):
+          t, _ = scene_mod.route_tangent(lines, np.array([xx, yy]))
+          field[i, j] = t
+      self._route_dir = jp.array(field)
+      self._route_grid = (float(half), gn)
+
     # World "up". Height gain along this is the climbing objective -- see
     # _reward_progress_uphill. Kept here so the reward needs to know nothing
     # about where the route goes.
@@ -183,6 +210,20 @@ class G1Env(mjx_env.MjxEnv):
 
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._xml_path = xml_path
+
+  def route_dir_at(self, world_xyz: jax.Array) -> jax.Array:
+    """Unit xy heading of the corridor at a world point. Zero if no routes.
+
+    Nearest-cell lookup into a precomputed field, so it costs one gather and
+    traces cleanly under jit.
+    """
+    if self._route_dir is None:
+      return jp.zeros(2)
+    half, gn = self._route_grid
+    fx = jp.clip((world_xyz[0] + half) / (2 * half) * (gn - 1), 0, gn - 1)
+    fy = jp.clip((world_xyz[1] + half) / (2 * half) * (gn - 1), 0, gn - 1)
+    return self._route_dir[jp.round(fy).astype(jp.int32),
+                           jp.round(fx).astype(jp.int32)]
 
   def terrain_height_at(self, world_xyz: jax.Array) -> jax.Array:
     """Relief above the mean plane at a world point, measured along the normal.
