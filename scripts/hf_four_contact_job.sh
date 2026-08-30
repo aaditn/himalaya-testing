@@ -6,6 +6,14 @@ set -Eeuo pipefail
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
+# Hugging Face starts the image through a login shell, which can replace the
+# Dockerfile PATH.  Activate the immutable image environment explicitly so
+# every Python and `hf` invocation uses the preinstalled JAX/MuJoCo runtime.
+test -f /opt/himalaya-venv/bin/activate
+source /opt/himalaya-venv/bin/activate
+test "$(command -v python)" = "/opt/himalaya-venv/bin/python"
+test "$(command -v hf)" = "/opt/himalaya-venv/bin/hf"
+
 : "${HF_REPO_ID:?HF_REPO_ID must be set}"
 : "${IMAGE_REF:?IMAGE_REF must be set to an immutable image digest}"
 : "${SOURCE_REVISION:?SOURCE_REVISION must be set}"
