@@ -683,7 +683,7 @@ class Joystick(g1_base.G1Env):
     return {
         # The climbing objective.
         "progress_uphill": self._reward_progress_uphill(
-            self.get_global_linvel(data, "torso"), data.qpos[0]
+            self.get_global_linvel(data, "torso"), data.qpos[0:3]
         ),
         # Tracking rewards.
         "tracking_lin_vel": self._reward_tracking_lin_vel(
@@ -801,7 +801,7 @@ class Joystick(g1_base.G1Env):
     return jp.sum(out_of_limits)
 
   def _reward_progress_uphill(self, global_linvel: jax.Array,
-                              data_x: jax.Array) -> jax.Array:
+                              data_pos: jax.Array) -> jax.Array:
     """Speed up the slope, clipped at a target pace.
 
     Deliberately says nothing about posture, limb count, or gait -- if
@@ -814,7 +814,24 @@ class Joystick(g1_base.G1Env):
     """
     if self._slope_rad == 0.0:
       return jp.zeros(())
-    speed = jp.dot(global_linvel, jp.array(self._uphill))
+
+    # Reward HEIGHT GAINED, not velocity along some chosen direction.
+    #
+    # A projection needs a direction, and both options were wrong. World-uphill
+    # punishes the corridor: the lane wanders 4.4 m laterally at a median 38
+    # degrees off the uphill axis, so following it pays only cos(38) and
+    # charging straight up the wall pays more. The lane tangent fixes that but
+    # scripts the route -- the env looks up where the lane goes and pays for
+    # alignment with it, which hands the policy the answer and needs a
+    # centreline a real robot would not have.
+    #
+    # Height gained has no direction in it at all. Rounding a bend still gains
+    # height; going backwards loses it. The policy is never told where the lane
+    # is -- it has to discover that the corridor is the cheapest way up. And it
+    # is optimising something a real robot could actually measure, since its own
+    # altitude is implied by the gravity vector and proprioception it already
+    # senses.
+    speed = jp.dot(global_linvel, jp.array(self._slope_normal_up))
     reward = jp.clip(speed, -1.0, self._config.reward_config.max_uphill_speed)
     # The platform is a starting position, not part of the task. Movement
     # there earns nothing -- otherwise it is just a flat-ground walking
@@ -829,7 +846,7 @@ class Joystick(g1_base.G1Env):
     # So loitering costs a fixed rate per step. The robot has to leave, and
     # once on the slope the penalty stops and real climbing reward starts.
     if self._platform_x is not None:
-      on_platform = data_x > self._platform_x
+      on_platform = data_pos[0] > self._platform_x
       reward = jp.where(
           on_platform, -self._config.reward_config.platform_loiter, reward
       )

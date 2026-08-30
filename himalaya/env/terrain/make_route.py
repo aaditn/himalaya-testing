@@ -121,10 +121,30 @@ def route(res=256, extent=12.0, lane_w=1.1, wall_h=0.55, wall_w=0.9,
 
 
 def write_png(path, z_scale, **kw):
+  """Write the heightfield PNG, and the lane centreline beside it.
+
+  The centreline is saved because the reward needs it: progress has to be
+  measured ALONG the route, not as world-space height. The lane wanders 4.4 m
+  laterally at a median 38 degrees off the uphill axis, so a plain uphill
+  projection pays only cos(38) ~ 0.79 for following the corridor and would
+  make charging straight up the wall the better-paid option.
+  """
   from PIL import Image
   h, stats = route(**kw)
   Image.fromarray((np.clip(h / z_scale, 0, 1) * 255).astype(np.uint8),
                   mode="L").save(path)
+
+  res = kw.get("res", 256)
+  extent = kw.get("extent", 12.0)
+  rng = np.random.default_rng(kw.get("seed", 0))
+  centre_cols = _smooth_path(res, rng)
+  cell = extent / res
+  # World coords: axis 0 of the grid is the uphill axis (world -x), axis 1 is
+  # lateral (world y). Store as (uphill_position, lateral_offset) in metres.
+  up = (np.arange(res) - res / 2.0) * cell
+  latm = (centre_cols - res / 2.0) * cell
+  np.save(str(path).replace(".png", "_centre.npy"),
+          np.stack([up, latm], axis=1))
   return h, stats
 
 

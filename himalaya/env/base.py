@@ -129,6 +129,30 @@ class G1Env(mjx_env.MjxEnv):
     except KeyError:
       pass
 
+    # Lane centreline, if the terrain ships one. Used to reward progress ALONG
+    # the route rather than straight uphill: the lane wanders 4.4 m laterally
+    # at a median 38 degrees off the uphill axis, so a plain uphill projection
+    # pays only cos(38) for following the corridor and makes charging straight
+    # up the wall the better-paid option.
+    self._lane = None
+    if self._mj_model.nhfield > 0:
+      import numpy as _np
+      cpath = consts.ROOT_PATH / "xmls" / "assets" / "mountain_centre.npy"
+      if cpath.exists():
+        lane = _np.load(cpath.as_posix())          # (N, 2): uphill pos, lateral
+        # Tangent of the route in the slope's own frame, unit length.
+        d_up = _np.gradient(lane[:, 0])
+        d_lat = _np.gradient(lane[:, 1])
+        norm = _np.sqrt(d_up ** 2 + d_lat ** 2) + 1e-9
+        self._lane = _np.stack(
+            [lane[:, 0], lane[:, 1], d_up / norm, d_lat / norm], axis=1
+        )
+
+    # World "up". Height gain along this is the climbing objective -- see
+    # _reward_progress_uphill. Kept as an attribute so the reward never has to
+    # know anything about the route.
+    self._slope_normal_up = np.array([0.0, 0.0, 1.0])
+
     self._terrain_peak = 0.0
     if self._mj_model.nhfield > 0:
       nr = int(self._mj_model.hfield_nrow[0])
