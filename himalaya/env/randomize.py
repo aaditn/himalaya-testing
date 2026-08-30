@@ -33,10 +33,17 @@ TORSO_BODY_ID = 16
 def domain_randomize(model: mjx.Model, rng: jax.Array):
   @jax.vmap
   def rand_dynamics(rng):
-    # Floor / foot friction: =U(0.4, 1.0).
+    # Floor contact friction: =U(0.4, 1.0).
+    #
+    # MODIFIED: slice widened 0:2 -> 0:4 to cover the two hand-floor pairs
+    # added alongside the feet. It is the same rock under both, so they share
+    # one sampled friction rather than the hands staying pinned at the XML
+    # default while the feet vary. Indices are POSITIONAL over the <pair>
+    # elements: 0,1 are left/right foot-floor and 2,3 are left/right
+    # hand-floor, so new pairs must be appended after these, never inserted.
     rng, key = jax.random.split(rng)
     friction = jax.random.uniform(key, minval=0.4, maxval=1.0)
-    pair_friction = model.pair_friction.at[0:2, 0:2].set(friction)
+    pair_friction = model.pair_friction.at[0:4, 0:2].set(friction)
 
     # Scale static friction: *U(0.9, 1.1).
     rng, key = jax.random.split(rng)

@@ -413,6 +413,19 @@
     <pair name="left_hand_thigh" geom1="left_hand_collision" geom2="left_thigh" condim="1"/>
     <pair name="right_hand_thigh" geom1="right_hand_collision" geom2="right_thigh" condim="1"/>
     <pair name="left_foot_right_foot" geom1="left_foot" geom2="right_foot" condim="1"/>
+    <!-- MODIFIED: hands can now touch the ground. Stock has no hand-floor pair
+         at all, so the palms passed straight through terrain and quadrupedal
+         climbing was physically impossible regardless of the reward.
+
+         condim="3" is required: the class default is condim="1" (frictionless),
+         which would let a planted palm slide freely and be useless for bracing.
+         friction matches the feet -- it is the same rock.
+
+         These are APPENDED deliberately. randomize.py does
+         pair_friction[0:4, 0:2], which indexes pairs positionally, so the two
+         foot-floor pairs must stay at indices 0 and 1. -->
+    <pair name="left_hand_floor" geom1="left_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
+    <pair name="right_hand_floor" geom1="right_hand_collision" geom2="floor" condim="3" friction="0.6 0.6"/>
     <!-- <pair name="left_foot_right_shin" geom1="left_foot" geom2="right_shin" condim="1"/> -->
     <!-- <pair name="right_foot_left_shin" geom1="right_foot" geom2="left_shin" condim="1"/> -->
     <!-- <pair name="left_shin_right_shin" geom1="left_shin" geom2="right_shin" condim="1"/> -->
