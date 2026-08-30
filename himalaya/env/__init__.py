@@ -88,6 +88,13 @@ def climb_walk_config(slope_deg: float = 15.0):
   # height stayed negative. At 4.0 it earns ~170, comparable to
   # tracking_lin_vel rather than dominating it, which keeps the gait.
   cfg.reward_config.scales.progress_uphill = 4.0
+  # No xy jitter. The robot starts on the flat SPAWN_PAD square that
+  # make_terrain_bank.py carves at scene.SPAWN in every variant. Jittering
+  # +/-0.5 m off it put Run L on wall flanks in a large share of episodes --
+  # 29 falls in 20 s. Variety comes from the 16 terrain variants and the
+  # heading jitter (scene.SPAWN_YAW_JITTER), neither of which moves the
+  # start off the pad.
+  cfg.spawn_jitter = 0.0
   return cfg
 
 

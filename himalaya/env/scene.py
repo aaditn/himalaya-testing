@@ -47,6 +47,20 @@ SPAWN_PROBE_SPAN = 0.12
 # Clearance left above the rock. Bilinear sampling smooths sharp ledges, so the
 # true surface under a foot can sit slightly above the interpolated value.
 SPAWN_CLEARANCE = 0.05
+# Side of the FLAT SQUARE carved into every terrain variant at SPAWN, metres.
+#
+# Run L spawned on the flank or top of a wall in a large share of episodes
+# and fell 29 times in 20 s. The xy jitter that put it there is gone
+# (spawn_jitter=0.0 on the climbing task), and this pad is the other half:
+# scripts/make_terrain_bank.py flattens this square to the corridor floor
+# in every variant, so a wall under the spawn is impossible by construction
+# rather than caught by a check. 1.6 m: the spawn heading (SPAWN_YAW) runs
+# nearly diagonal to the grid, so a +/-0.45 m square around the robot reaches
+# 0.64 m from centre at its corners, and the slope-agnostic bank's grid index
+# sits 2.3 cells (0.11 m) from where the tilted floor's mapping puts the
+# spawn. 0.75 m half-width covers both; 1.2 m did not (measured: the gate's
+# corners read the wall, ptp ~1 m in 16/16 variants).
+SPAWN_PAD = 1.6
 
 # --- physics ---------------------------------------------------------------
 NJMAX = 160

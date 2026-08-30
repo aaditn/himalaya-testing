@@ -38,6 +38,7 @@ _sspec = importlib.util.spec_from_file_location(
 _scene = importlib.util.module_from_spec(_sspec)
 _sspec.loader.exec_module(_scene)
 SPAWN_X, SPAWN_Y = _scene.SPAWN
+SPAWN_PAD = _scene.SPAWN_PAD
 
 _spec = importlib.util.spec_from_file_location(
     "make_route", ROOT / "himalaya" / "env" / "terrain" / "make_route.py")
@@ -105,6 +106,24 @@ def main():
         lo_r, lo_c = flat // a.res, flat % a.res
         h = np.roll(h, sr - lo_r, axis=0)
         h = np.roll(h, sc_ - lo_c, axis=1)
+        # FLAT PAD under the spawn. The roll above puts the field's global
+        # minimum at the spawn cell; this flattens a SPAWN_PAD-metre square
+        # around it to that height, so the robot starts on level corridor
+        # floor in every variant. Run L spawned on wall flanks and fell 29
+        # times in 20 s; a check that the spawn is not on a wall can be fooled
+        # (an upright robot ON TOP of a wall passes every posture test), but a
+        # square that is flat by construction cannot.
+        cell = 12.0 / a.res
+        half = int(round(SPAWN_PAD / 2.0 / cell))
+        floor = float(h[sr, sc_])
+        r0, r1 = max(sr - half, 0), min(sr + half + 1, a.res)
+        c0, c1 = max(sc_ - half, 0), min(sc_ + half + 1, a.res)
+        h[r0:r1, c0:c1] = floor
+        pad = h[r0:r1, c0:c1]
+        assert np.ptp(pad) == 0.0, f"variant {i}: pad not flat, ptp={np.ptp(pad)}"
+        assert h[sr, sc_] == floor, f"variant {i}: spawn cell off the pad"
+        assert (r1 - r0) * cell >= SPAWN_PAD - 2 * cell, \
+            f"variant {i}: pad clipped by the map edge"
         # Normalise to the z budget LAST. The carve digs below zero and adds to
         # the total range, so a field that measured 1.0 m before carving can
         # exceed the scene's z_scale afterwards and clip in the PNG.
@@ -127,6 +146,7 @@ def main():
     print(f"  wall depth     {min(walls):.2f}-{max(walls):.2f} m")
     print(f"  roughness      {min(roughs):.2f}-{max(roughs):.2f} m")
     print(f"  relief in metres: {bank.max()*a.z_scale:.2f} (z_scale {a.z_scale})")
+    print(f"  spawn pad: {SPAWN_PAD:.2f} m square, flat in {a.n}/{a.n} variants")
 
 
 if __name__ == "__main__":
