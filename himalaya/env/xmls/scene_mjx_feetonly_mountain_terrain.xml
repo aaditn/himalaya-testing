@@ -26,13 +26,13 @@
     <!-- Mountainside: fractal rock, terraced into ledges. See
          himalaya/env/terrain/make_mountain.py.
 
-         12 m half-extent rather than the stock 20 m, and 1.2 m of relief
-         rather than 0.05 m. The stock hfield is 5 cm of undulation over 7.8 cm
+         12 m patch rather than the stock 20 m, and 2.0 m of relief rather
+         than 0.05 m. The stock hfield is 5 cm of undulation over 7.8 cm
          cells -- a 5 cm hand capsule rests ON that and has nothing to hook, so
          hands could only ever add pressing friction. Here the risers reach
          ~0.2 m, several times the hand radius, so a palm can brace against a
          face instead of just pressing down on one. -->
-    <hfield name="hfield" file="assets/mountain.png" size="6 6 1.2 1.0"/>
+    <hfield name="hfield" file="assets/mountain.png" size="6 6 2.0 1.0"/>
   </asset>
 
   <worldbody>

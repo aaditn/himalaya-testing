@@ -109,6 +109,19 @@ class G1Env(mjx_env.MjxEnv):
         [-np.cos(self._slope_rad), 0.0, np.sin(self._slope_rad)]
     )
 
+    # Highest point of the terrain above its own mean plane. reset() lifts the
+    # spawn by this so the robot starts above the rock rather than inside it.
+    # A smooth-plane correction is not enough once the heightfield carries real
+    # relief: measured on the 2.0 m mountain terrain, every foot spawned an
+    # average of 1.55 m underground.
+    self._terrain_peak = 0.0
+    if self._mj_model.nhfield > 0:
+      nr = int(self._mj_model.hfield_nrow[0])
+      nc = int(self._mj_model.hfield_ncol[0])
+      z_top = float(self._mj_model.hfield_size[0][2])
+      hf = np.array(self._mj_model.hfield_data[: nr * nc])
+      self._terrain_peak = float(hf.max()) * z_top
+
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._xml_path = xml_path
 

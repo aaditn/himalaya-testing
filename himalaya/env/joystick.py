@@ -312,6 +312,12 @@ class Joystick(g1_base.G1Env):
         qpos = qpos.at[2].add(
             self._init_q[2] * (1.0 - jp.cos(self._slope_rad))
         )
+        # Clear the terrain's own relief. Spawning against the mean plane puts
+        # the robot inside any rock above it; on the 2.0 m mountain terrain
+        # that was every foot, ~1.55 m under. Starting at the peak costs a
+        # short drop onto the surface, which the policy handles, and is far
+        # cheaper than an episode that begins underground.
+        qpos = qpos.at[2].add(self._terrain_peak)
 
     # qpos[7:]=*U(0.5, 1.5)
     rng, key = jax.random.split(rng)

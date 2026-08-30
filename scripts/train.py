@@ -55,7 +55,10 @@ def main():
     # Names the vendored env uses directly; Playground's registry was
     # translating its public "G1Joystick*Terrain" ids onto these.
     if args.climb is not None:
-        task = "slope_terrain"
+        # mountain_terrain, not slope_terrain: the stock rough hfield's 5 cm
+        # bumps are smaller than the hand capsule, so a palm can press on them
+        # but never hook one, and climbing cannot emerge.
+        task = "mountain_terrain"
         cfg = climb_config(args.climb)
     else:
         task = "rough_terrain" if args.rough else "flat_terrain"
