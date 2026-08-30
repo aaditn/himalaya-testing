@@ -96,13 +96,21 @@ def default_config() -> config_dict.ConfigDict:
               dof_pos_limits=-1.0,
               pose=-0.1,
           ),
-          # Target climb rate for progress_uphill, m/s along the surface.
-          max_uphill_speed=0.8,
+          # Target climb rate for progress_uphill, in metres of HEIGHT per
+          # second. On a 35 degree slope 0.30 m/s of height is about 0.52 m/s
+          # along the ground -- a brisk but reachable climb. The old 0.8 was
+          # inherited from when this measured ground speed; as a height cap it
+          # would need 1.4 m/s along the ground, so it never bound and the
+          # reward had no ceiling.
+          max_uphill_speed=0.30,
           # Per-step cost of sitting on the starting platform, in the same
-          # units as progress_uphill. Set below max_uphill_speed so climbing
-          # is always the better option, but high enough that waiting is not
-          # free.
-          platform_loiter=0.5,
+          # units as progress_uphill (metres of height per second). Set well
+          # below max_uphill_speed so climbing always beats waiting, without
+          # the penalty dwarfing the reward: at 0.5 against a 0.30 ceiling,
+          # loitering cost -4.0 while the best climb earned +2.3, which
+          # punishes the robot for existing on the platform harder than it can
+          # ever be paid for climbing.
+          platform_loiter=0.08,
           tracking_sigma=0.25,
           max_foot_height=0.15,
           base_height_target=0.5,
