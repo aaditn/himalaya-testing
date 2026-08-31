@@ -1,0 +1,22 @@
+{
+  "stages": [
+    {
+      "name": "stability-20deg",
+      "slope_degrees": 20,
+      "roughness_m": 0.008,
+      "boulders_enabled": false,
+      "spike_friction": 1.0,
+      "target_uphill_speed": 0.12,
+      "target_hand_load_share": 0.34,
+      "action_scale": 0.30,
+      "learning_rate": 0.00004,
+      "entropy_cost": 0.0005,
+      "updates_per_batch": 3,
+      "num_timesteps": 12000000,
+      "num_evals": 4,
+      "eval_envs": 64,
+      "terrain_seed": 320,
+      "domain_randomization": false
+    }
+  ]
+}

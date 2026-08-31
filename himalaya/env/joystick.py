@@ -103,6 +103,7 @@ def default_config() -> config_dict.ConfigDict:
               failed_ascent=0.0,
               overspeed=0.0,
               crawl_height=0.0,
+              low_pelvis_clearance=0.0,
               mixed_support=0.0,
               foot_uphill_drive=0.0,
               foot_swing_clearance=0.0,
@@ -189,7 +190,7 @@ def default_config() -> config_dict.ConfigDict:
           reference_support_knee_extension=0.16,
           reference_support_elbow_push=0.14,
           gait_frequency_range=[0.55, 0.75],
-          max_uphill_speed_ratio=1.25,
+          max_uphill_speed_ratio=1.15,
           stall_seconds=3.0,
           max_regression_distance=0.35,
           max_downhill_distance=1.5,
@@ -233,7 +234,7 @@ class Joystick(g1_base.G1Env):
       # every forward sample and taught PPO to minimize motion.  Keep a clear
       # fall cost, but leave enough return for a partially successful stride
       # to be better than shuffling in place.
-      scales.termination = -25.0
+      scales.termination = -50.0
       # MODIFIED: reward a completed airborne step. The stock phase-height
       # curve stays positive through nearly the whole cycle and conflicts
       # with planted crawl support, so it is disabled for climbing.
@@ -264,13 +265,17 @@ class Joystick(g1_base.G1Env):
       # advance makes a full 20 cm step worth four 10 cm steps, while the
       # episode-best plant record prevents repeated stamping from farming it.
       scales.large_foot_step = 1.0
-      scales.failed_ascent = -3.0
+      scales.failed_ascent = -4.5
       # MODIFIED: the previous policy briefly reached 7.5x the commanded
       # velocity, then pitched down and lost half its progress. Displacement
       # already saturates at the commanded speed below; explicitly penalize
       # the remaining high-speed lunge without penalizing useful acceleration.
-      scales.overspeed = -1.5
-      scales.crawl_height = 0.5
+      scales.overspeed = -3.0
+      scales.crawl_height = 1.5
+      # Penalize the approach to the pelvis-clearance fall threshold.  A
+      # terminal penalty arrives too late to distinguish a controlled stride
+      # from the fast surge that caused the observed 0.23 m clearance resets.
+      scales.low_pelvis_clearance = -6.0
       scales.mixed_support = 0.5
       scales.foot_uphill_drive = 0.8
       # MODIFIED: dense, phase-aligned scaffolding for the failure observed in
@@ -1430,6 +1435,9 @@ class Joystick(g1_base.G1Env):
                 - self._config.climb.target_pelvis_clearance
             ) / 0.01
         ),
+        "low_pelvis_clearance": self._cost_low_pelvis_clearance(
+            pelvis_clearance
+        ),
         "mixed_support": mixed_support.astype(data.qpos.dtype),
         "foot_uphill_drive": foot_uphill_drive,
         "foot_swing_clearance": foot_swing_clearance,
@@ -1562,6 +1570,18 @@ class Joystick(g1_base.G1Env):
         0.0,
     )
     return jp.clip(jp.square(excess), 0.0, 4.0)
+
+  def _cost_low_pelvis_clearance(
+      self, pelvis_clearance: jax.Array
+  ) -> jax.Array:
+    """Rises smoothly before the pelvis reaches the hard fall threshold."""
+    deficit = (
+        self._config.climb.target_pelvis_clearance - pelvis_clearance
+    ) / (
+        self._config.climb.target_pelvis_clearance
+        - self._config.climb.fall_pelvis_clearance
+    )
+    return jp.square(jp.clip(deficit, 0.0, 1.0))
 
   def _cost_joint_deviation_hip(
       self, qpos: jax.Array, cmd: jax.Array

@@ -154,7 +154,7 @@ def main():
     state.info["command"] = jp.array([command_vx, args.vy, args.wz])
 
     n = int(args.seconds / env.dt)
-    rollout, actions, slips = [], [], 0
+    rollout, actions, slips, termination_events = [], [], 0, []
     rng = jax.random.PRNGKey(1)
     for _ in range(n):
         rng, key = jax.random.split(rng)
@@ -167,6 +167,10 @@ def main():
         state.info["command"] = jp.array([command_vx, args.vy, args.wz])
         rollout.append(state)
         if float(state.done):
+            if args.climb:
+                termination_events.append(
+                    _climb_termination_diagnostic(env, state, len(rollout) - 1)
+                )
             state = reset(key)
             state.info["command"] = jp.array([command_vx, args.vy, args.wz])
             slips += 1
@@ -369,6 +373,10 @@ def main():
             f"bonus sum/max={large_foot_step_bonus.sum():.3f}/"
             f"{large_foot_step_bonus.max():.3f}"
         )
+        if termination_events:
+            print("    termination events:")
+            for event in termination_events:
+                print(f"      {event}")
 
 
 def _render_free(env, rollout, cam, width, height):
@@ -414,6 +422,50 @@ def _climb_command_speed(slope_degrees):
             fraction = (slope - low_slope) / (high_slope - low_slope)
             return low_speed + fraction * (high_speed - low_speed)
     return schedule[-1][1]
+
+
+def _climb_termination_diagnostic(env, state, frame):
+    """Describe which direct-environment termination guard fired."""
+    import numpy as np
+
+    data = state.data
+    info = state.info
+    uphill = float(data.qpos[:3] @ env._slope_tangent)
+    alignment = float(env.get_gravity(data, "torso") @ env._slope_tangent)
+    clearance = float(
+        data.qpos[:3] @ env._slope_normal - env._terrain_plane_offset
+    )
+    regression = float(info["max_uphill_position"] - uphill)
+    collision_addresses = [
+        env._mj_model.sensor_adr[env._right_foot_left_foot_found_sensor],
+        env._mj_model.sensor_adr[env._left_foot_right_shin_found_sensor],
+        env._mj_model.sensor_adr[env._right_foot_left_shin_found_sensor],
+    ]
+    collision = any(float(data.sensordata[address]) > 0 for address in collision_addresses)
+    reasons = []
+    if alignment < 0.35:
+        reasons.append("posture")
+    if clearance < env._config.climb.fall_pelvis_clearance:
+        reasons.append("pelvis-clearance")
+    if collision:
+        reasons.append("self-collision")
+    if regression > env._config.climb.max_regression_distance:
+        reasons.append("regression")
+    if abs(float(data.qpos[1])) > env._config.climb.max_lateral_distance:
+        reasons.append("lateral")
+    if int(info["steps_without_progress"]) >= int(
+        env._config.climb.stall_seconds / env.dt
+    ):
+        reasons.append("stall")
+    if not np.isfinite(np.asarray(data.qpos)).all() or not np.isfinite(
+        np.asarray(data.qvel)
+    ).all():
+        reasons.append("non-finite")
+    reason_text = "+".join(reasons) if reasons else "unclassified"
+    return (
+        f"frame={frame} reason={reason_text} alignment={alignment:.3f} "
+        f"clearance={clearance:.3f}m regression={regression:.3f}m"
+    )
 
 
 if __name__ == "__main__":

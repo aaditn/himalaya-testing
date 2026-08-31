@@ -69,10 +69,10 @@ class HimalayaClimbTest(unittest.TestCase):
             self.env._config.reward_config.scales.assisted_uphill_progress, 1.5
         )
         self.assertEqual(
-            self.env._config.reward_config.scales.failed_ascent, -3.0
+            self.env._config.reward_config.scales.failed_ascent, -4.5
         )
         self.assertEqual(
-            self.env._config.reward_config.scales.termination, -25.0
+            self.env._config.reward_config.scales.termination, -50.0
         )
         self.assertEqual(self.env._config.climb.waypoint_interval, 0.25)
         self.assertEqual(self.env._config.climb.max_regression_distance, 0.35)
@@ -111,6 +111,9 @@ class HimalayaClimbTest(unittest.TestCase):
         )
         self.assertLess(
             self.env._config.reward_config.scales.overspeed, 0.0
+        )
+        self.assertLess(
+            self.env._config.reward_config.scales.low_pelvis_clearance, 0.0
         )
         self.assertGreater(
             self.env._config.reward_config.scales.knee_clearance, 0.0
@@ -267,7 +270,15 @@ class HimalayaClimbTest(unittest.TestCase):
         )
         self.assertAlmostEqual(
             float(self.env._cost_uphill_overspeed(2.0 * target_speed)),
-            0.75**2,
+            0.85**2,
+        )
+        target_clearance = self.env._config.climb.target_pelvis_clearance
+        fall_clearance = self.env._config.climb.fall_pelvis_clearance
+        self.assertAlmostEqual(
+            float(self.env._cost_low_pelvis_clearance(target_clearance)), 0.0
+        )
+        self.assertAlmostEqual(
+            float(self.env._cost_low_pelvis_clearance(fall_clearance)), 1.0
         )
         self.assertAlmostEqual(
             float(self.env._reward_uphill_velocity(
@@ -344,6 +355,7 @@ class HimalayaClimbTest(unittest.TestCase):
         self.assertLessEqual(max(np.diff(slopes)), 8)
         self.assertFalse(stages[-2]["boulders_enabled"])
         self.assertTrue(stages[-1]["boulders_enabled"])
+
         self.assertTrue(all(stage["eval_envs"] <= 32 for stage in stages))
 
         config = default_config()
@@ -372,6 +384,17 @@ class HimalayaClimbTest(unittest.TestCase):
             "left_foot", "right_foot",
             "left_hand_collision", "right_hand_collision",
         }.issubset(contacts))
+
+    def test_stability_curriculum_reduces_lunge_authority(self):
+        stage = json.loads(
+            Path("configs/curriculum_stability_20deg.json").read_text(
+                encoding="utf-8"
+            )
+        )["stages"][0]
+        self.assertEqual(stage["slope_degrees"], 20)
+        self.assertLessEqual(stage["target_uphill_speed"], 0.12)
+        self.assertLessEqual(stage["action_scale"], 0.30)
+        self.assertGreaterEqual(stage["target_hand_load_share"], 0.34)
 
     def test_crawl_reset_reaches_hand_contact(self):
         model = self.env.mj_model

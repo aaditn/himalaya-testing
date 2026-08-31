@@ -141,14 +141,17 @@ def main():
             if k.startswith("eval/episode_reward/"):
                 row[k.split("/")[-1]] = round(float(v), 4)
         # Select checkpoints for actual ascent, not merely total shaped
-        # reward. Net displacement, command-speed tracking, completed
-        # waypoints, and survival all matter; this avoids exporting a late
-        # policy after PPO has regressed from an earlier useful gait.
+        # reward. Net displacement, completed waypoints, survival, failed
+        # ascent, overspeed, and low-clearance exposure all matter; this
+        # avoids selecting a fast surge that collapses after making progress.
         row["selection_score"] = round(
             row.get("mountain_progress", 0.0)
             + row.get("uphill_progress", 0.0)
             + row.get("waypoint_bonus", 0.0)
-            + 0.1 * row["episode_len"],
+            + row.get("failed_ascent", 0.0)
+            + row.get("overspeed", 0.0)
+            + row.get("low_pelvis_clearance", 0.0)
+            + 0.5 * row["episode_len"],
             4,
         )
         history.append(row)
