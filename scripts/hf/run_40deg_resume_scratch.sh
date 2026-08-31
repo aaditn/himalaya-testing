@@ -6,6 +6,7 @@ RUNS_MOUNT="${RUNS_MOUNT:-/runs}"
 SCRATCH_RUNS="${SCRATCH_RUNS:-/tmp/himalaya-runs}"
 PREFIX="${PREFIX:-g1_45deg_h200_resume_v3}"
 TRAIN_ENVS="${TRAIN_ENVS:-8192}"
+OUTPUT_REPO="${OUTPUT_REPO:-iteratehack/g1-himalaya-four-contact}"
 RESTORE_SOURCE="${RESTORE_SOURCE:-${RUNS_MOUNT}/g1_45deg_curriculum_h200_v2_04_transfer-35deg/checkpoints/000024248320}"
 RESTORE_LOCAL="/tmp/himalaya-restore"
 
@@ -22,7 +23,8 @@ PY
 # Orbax creates many small files. Writing them directly through the bucket
 # mount caused EIO and disappearing-directory failures in both long runs.
 # Copy the restore once, train entirely on local NVMe, and upload compact
-# final artifacts only after all stages complete.
+# final artifacts only after all stages complete. The source bucket is mounted
+# read-only because the organization's private-storage quota is full.
 mkdir -p "${RESTORE_LOCAL}" "${SCRATCH_RUNS}"
 cp -a "${RESTORE_SOURCE}/." "${RESTORE_LOCAL}/"
 
@@ -35,15 +37,37 @@ python scripts/train_climb_curriculum.py \
   --restore "${RESTORE_LOCAL}"
 
 for stage_dir in "${SCRATCH_RUNS}/${PREFIX}"_*; do
-  destination="${RUNS_MOUNT}/$(basename "${stage_dir}")"
-  mkdir -p "${destination}"
-  cp "${stage_dir}/policy" "${destination}/policy"
-  cp "${stage_dir}/metrics.json" "${destination}/metrics.json"
-  cp "${stage_dir}/best_checkpoint.json" "${destination}/best_checkpoint.json"
+  python - "${stage_dir}" "${OUTPUT_REPO}" <<'PY'
+import sys
+from pathlib import Path
+
+from huggingface_hub import HfApi
+
+stage = Path(sys.argv[1])
+HfApi().upload_folder(
+    repo_id=sys.argv[2],
+    folder_path=stage,
+    path_in_repo=f"runs/{stage.name}",
+    allow_patterns=["policy", "metrics.json", "best_checkpoint.json"],
+)
+PY
 done
 
 final_stage="$(find "${SCRATCH_RUNS}" -maxdepth 1 -type d -name "${PREFIX}_*" | sort | tail -n 1)"
 best_step="$(python -c 'import json,sys; print("%012d" % json.load(open(sys.argv[1]))["step"])' "${final_stage}/best_checkpoint.json")"
 tar -C "${final_stage}/checkpoints" -czf \
-  "${RUNS_MOUNT}/$(basename "${final_stage}")/best_checkpoint.tar.gz" \
+  "/tmp/best_checkpoint.tar.gz" \
   "${best_step}"
+python - "${final_stage}" "${OUTPUT_REPO}" <<'PY'
+import sys
+from pathlib import Path
+
+from huggingface_hub import HfApi
+
+stage = Path(sys.argv[1])
+HfApi().upload_file(
+    repo_id=sys.argv[2],
+    path_or_fileobj="/tmp/best_checkpoint.tar.gz",
+    path_in_repo=f"runs/{stage.name}/best_checkpoint.tar.gz",
+)
+PY
