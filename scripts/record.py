@@ -7,6 +7,7 @@ Renders offscreen on the GPU -- no display needed -- so it works while
 training is running. Pull the result with scripts/pod/pull.sh.
 """
 import argparse
+import itertools
 import os
 import sys
 from pathlib import Path
@@ -23,7 +24,13 @@ def main():
                     help="hand microspike friction to render at")
     ap.add_argument("--foot-friction", type=float, default=1.90,
                     help="foot microspike friction to render at")
-    ap.add_argument("--vx", type=float, default=0.8, help="commanded forward vel")
+    ap.add_argument(
+        "--vx", type=float, default=None,
+        help=(
+            "commanded forward velocity; climb renders default to the "
+            "curriculum target for the selected slope (0.8 otherwise)"
+        ),
+    )
     ap.add_argument("--action-scale", type=float, default=0.35,
                     help="residual action scale used during training")
     ap.add_argument("--vy", type=float, default=0.0)
@@ -43,6 +50,11 @@ def main():
     ap.add_argument("--width", type=int, default=960)
     ap.add_argument("--height", type=int, default=640)
     args = ap.parse_args()
+    command_vx = (
+        args.vx
+        if args.vx is not None
+        else _climb_command_speed(args.slope) if args.climb else 0.8
+    )
 
     import jax
     import jax.numpy as jp
@@ -79,6 +91,11 @@ def main():
         cfg.climb.spike_friction = args.friction
         cfg.climb.foot_spike_friction = args.foot_friction
         cfg.climb.residual_action_scale = args.action_scale
+        # The command is part of the actor observation.  Feeding a climb
+        # policy the old 0.8 m/s flat-ground default put it 5-9x outside its
+        # training distribution and saturated the actions.  Keep the env's
+        # reward normalization and the fixed rollout command aligned.
+        cfg.climb.target_uphill_speed = command_vx
     env = Joystick(task=task, config=cfg)
 
     # Rebuild the same network shape the trainer used, then load the weights.
@@ -134,7 +151,7 @@ def main():
 
     state = reset(jax.random.PRNGKey(0))
     # hold a fixed velocity command so the clip shows deliberate walking
-    state.info["command"] = jp.array([args.vx, args.vy, args.wz])
+    state.info["command"] = jp.array([command_vx, args.vy, args.wz])
 
     n = int(args.seconds / env.dt)
     rollout, actions, slips = [], [], 0
@@ -147,11 +164,11 @@ def main():
             act, _ = inference(state.obs, key)
         actions.append(act)
         state = step(state, act)
-        state.info["command"] = jp.array([args.vx, args.vy, args.wz])
+        state.info["command"] = jp.array([command_vx, args.vy, args.wz])
         rollout.append(state)
         if float(state.done):
             state = reset(key)
-            state.info["command"] = jp.array([args.vx, args.vy, args.wz])
+            state.info["command"] = jp.array([command_vx, args.vy, args.wz])
             slips += 1
 
     # Match the rendered model to the simulated one.
@@ -184,7 +201,7 @@ def main():
     print(f"wrote {out}  ({len(frames)} frames, {args.seconds}s)")
     print(
         f"  hand_friction={args.friction} foot_friction={args.foot_friction}  "
-        f"command=({args.vx},{args.vy},{args.wz})"
+        f"command=({command_vx},{args.vy},{args.wz})"
     )
     print(f"  falls during clip: {slips}")
     if args.climb:
@@ -374,6 +391,29 @@ def _render_free(env, rollout, cam, width, height):
         frames.append(renderer.render())
     renderer.close()
     return frames
+
+
+def _climb_command_speed(slope_degrees):
+    """Interpolate the command used by the 45-degree training curriculum."""
+    schedule = [
+        (5.0, 0.15),
+        (12.0, 0.15),
+        (20.0, 0.14),
+        (28.0, 0.13),
+        (35.0, 0.12),
+        (40.0, 0.11),
+        (45.0, 0.10),
+    ]
+    slope = float(slope_degrees)
+    if slope <= schedule[0][0]:
+        return schedule[0][1]
+    for (low_slope, low_speed), (high_slope, high_speed) in itertools.pairwise(
+        schedule
+    ):
+        if slope <= high_slope:
+            fraction = (slope - low_slope) / (high_slope - low_slope)
+            return low_speed + fraction * (high_speed - low_speed)
+    return schedule[-1][1]
 
 
 if __name__ == "__main__":
