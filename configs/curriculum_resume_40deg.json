@@ -1,0 +1,58 @@
+{
+  "stages": [
+    {
+      "name": "transfer-40deg",
+      "slope_degrees": 40,
+      "roughness_m": 0.015,
+      "boulders_enabled": false,
+      "spike_friction": 1.0,
+      "target_uphill_speed": 0.11,
+      "target_hand_load_share": 0.42,
+      "action_scale": 0.30,
+      "learning_rate": 0.00005,
+      "entropy_cost": 0.001,
+      "updates_per_batch": 3,
+      "num_timesteps": 40000000,
+      "num_evals": 6,
+      "eval_envs": 32,
+      "terrain_seed": 140,
+      "domain_randomization": false
+    },
+    {
+      "name": "four-limb-45deg",
+      "slope_degrees": 45,
+      "roughness_m": 0.020,
+      "boulders_enabled": false,
+      "spike_friction": 1.0,
+      "target_uphill_speed": 0.10,
+      "target_hand_load_share": 0.45,
+      "action_scale": 0.30,
+      "learning_rate": 0.00005,
+      "entropy_cost": 0.0008,
+      "updates_per_batch": 3,
+      "num_timesteps": 60000000,
+      "num_evals": 8,
+      "eval_envs": 32,
+      "terrain_seed": 145,
+      "domain_randomization": false
+    },
+    {
+      "name": "rocky-four-limb-45deg",
+      "slope_degrees": 45,
+      "roughness_m": 0.060,
+      "boulders_enabled": true,
+      "spike_friction": 1.0,
+      "target_uphill_speed": 0.09,
+      "target_hand_load_share": 0.45,
+      "action_scale": 0.28,
+      "learning_rate": 0.00004,
+      "entropy_cost": 0.0008,
+      "updates_per_batch": 3,
+      "num_timesteps": 80000000,
+      "num_evals": 8,
+      "eval_envs": 32,
+      "terrain_seed": 245,
+      "domain_randomization": true
+    }
+  ]
+}
